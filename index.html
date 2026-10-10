@@ -341,6 +341,9 @@ table.pa td.pa-x{background:repeating-linear-gradient(135deg,var(--beige3) 0 3px
 table.pa tfoot td{text-align:center;font-size:11px;font-weight:700;border-top:2px solid var(--ink);padding:4px 2px}
 .pa-leg{display:flex;flex-wrap:wrap;gap:6px 16px;align-items:center;margin-top:10px;font-size:12px;color:var(--ink2)}
 .pa-renvoi{margin-left:auto;font-style:italic}
+.ga-resume{margin-top:6px;font-size:14px}
+.ga-resume p{margin:10px 0 4px}
+.ga-liste{max-height:150px;overflow:auto;border:1px solid var(--line);border-radius:var(--r);background:var(--soft);padding:6px 10px;font-size:12.5px;color:var(--ink2);line-height:1.6}
 .pa-papier{display:none}
 
 @media print{
@@ -736,6 +739,10 @@ function styleCode(code){ var c = couleurCfa(cfaDe(code)); return "background:" 
 
 /* Tarif d'un code à une date : la ligne la plus récente dont la date d'effet est passée (comme l'Excel) */
 function tarif(code, iso){
+  var t = tarifDuCode(code, iso), ci = t ? null : codeInfo(code);
+  return t || (ci && ci.cfa && ci.cfa !== code ? tarifDuCode(ci.cfa, iso) : null);
+}
+function tarifDuCode(code, iso){
   var ref = moisDe(iso || aujourdhui()) + "-01", best = null;
   D.tarifs.forEach(function(t){ if(t.code === code && (t.effet || "2000-01-01") <= ref && (!best || t.effet > best.effet)) best = t; });
   if(!best) D.tarifs.forEach(function(t){ if(t.code === code && (!best || t.effet < best.effet)) best = t; });
@@ -857,7 +864,7 @@ function lignesDepuisPlanning(m, cl){
     if(!t || t.mode === "manuel" || !o.demi) return;
     var hPlanning = 0, vus = {};
     o.jours.forEach(function(j){ if(vus[j]) return; vus[j] = 1; ["m", "a"].forEach(function(k){ var c = cellule(j, k); if(c && c.c === code) hPlanning += heuresCellule(c, j); }); });
-    var lib = dernierLibelle(cl.id, code) || t.libelle || code;
+    var lib = dernierLibelle(cl.id, code) || (codeInfo(code) || {}).libelle || t.libelle || code;
     if(t.mode === "jour") lignes.push({libelle: lib, quantite: arrondi(hPlanning / (2 * (+t.heuresDemi || 1)), 3), unite: "j", pu: +t.forfait || arrondi(2 * t.heuresDemi * t.taux, 2), code: code});
     else lignes.push({libelle: lib, quantite: arrondi(hPlanning, 2), unite: "h", pu: +t.taux || 0, code: code});
   });
@@ -1518,6 +1525,7 @@ VUES.planning = function(anUrl, m){
     document.title = "Planning " + anneeLongue(an);
     h += '<div class="barre-actions pa-actions"><button class="btn pri" data-act="pa-imprimer" data-an="' + idAnneeUrl(an) + '" data-masque="0">' + ICO.imprimer + ' Imprimer</button>' +
       '<button class="btn" data-act="pa-imprimer" data-an="' + idAnneeUrl(an) + '" data-masque="1">' + ICO.imprimer + ' Imprimer sans les établissements (ND*)</button>' +
+      '<button class="btn" data-act="galia-importer">' + ICO.telecharger + ' Importer le planning Galia</button>' +
       '<span class="aide">Clique sur un jour pour ouvrir son mois et le modifier.</span></div>';
     return h + planningAnneeHTML(an, A) + '</div>';
   }
@@ -2372,16 +2380,17 @@ ACTIONS["tarif-moins"] = function(el){
 };
 PARAM.codes = function(){
   var h = '<div class="grille2"><div class="bloc"><div class="bloc-tete"><h2>Codes du planning</h2><button class="btn petit" data-act="code-plus">' + ICO.plus + ' Ajouter un code</button></div>' +
-    '<p class="aide" style="margin:-4px 0 12px">Comme ton onglet LISTE : le code choisi dans le planning, le CFA auquel il est rattaché, et s’il apparaît dans la liste. Chaque code doit avoir un tarif.</p>' +
-    '<table class="t edit"><thead><tr><th>Code</th><th>CFA</th><th>Dans la liste</th><th>Tarif</th><th></th></tr></thead><tbody>';
+    '<p class="aide" style="margin:-4px 0 12px">Comme ton onglet LISTE : le code choisi dans le planning, le CFA auquel il est rattaché, et s’il apparaît dans la liste. Un code sans tarif propre (une classe, par exemple) prend le tarif de son CFA. Le libellé est celui de la ligne de facture.</p>' +
+    '<div class="tab-wrap"><table class="t edit"><thead><tr><th>Code</th><th>CFA</th><th>Libellé sur la facture</th><th>Dans la liste</th><th>Tarif</th><th></th></tr></thead><tbody>';
   D.codes.forEach(function(c, i){
-    var t = tarif(c.code);
-    h += '<tr><td><input class="in" data-ch="code" data-i="' + i + '" data-champ="code" value="' + esc(c.code) + '"></td><td><input class="in" data-ch="code" data-i="' + i + '" data-champ="cfa" value="' + esc(c.cfa) + '"></td>' +
+    var t = tarif(c.code), propre = t && t.code === c.code;
+    h += '<tr><td><input class="in" style="min-width:170px" data-ch="code" data-i="' + i + '" data-champ="code" value="' + esc(c.code) + '"></td><td><input class="in" style="min-width:70px" data-ch="code" data-i="' + i + '" data-champ="cfa" value="' + esc(c.cfa) + '"></td>' +
+      '<td><input class="in" style="min-width:150px" data-ch="code" data-i="' + i + '" data-champ="libelle" value="' + esc(c.libelle || "") + '" placeholder="celui du tarif"></td>' +
       '<td><label class="case"><input type="checkbox" data-ch="code" data-i="' + i + '" data-champ="afficher"' + (c.afficher !== false ? " checked" : "") + '> Oui</label></td>' +
-      '<td>' + (t ? '<span class="st st-payee">OK</span>' : '<span class="st st-retard">Sans tarif</span>') + '</td>' +
+      '<td>' + (propre ? '<span class="st st-payee">OK</span>' : t ? '<span class="st st-brouillon" title="Tarif de ' + esc(t.code) + '">' + esc(t.code) + '</span>' : '<span class="st st-retard">Sans tarif</span>') + '</td>' +
       '<td><button class="ico-btn" data-act="code-moins" data-i="' + i + '" title="Supprimer">' + ICO.corbeille + '</button></td></tr>';
   });
-  h += '</tbody></table></div><div class="bloc"><h2>Couleurs des CFA dans le planning</h2><table class="t"><tbody>';
+  h += '</tbody></table></div></div><div class="bloc"><h2>Couleurs des CFA dans le planning</h2><table class="t"><tbody>';
   listeCfa().forEach(function(cfa){
     h += '<tr><td>' + chipCode(cfa) + '</td><td><select class="in" data-ch="couleur" data-cfa="' + esc(cfa) + '">' + COULEURS.map(function(co, i){ return '<option value="' + i + '"' + (couleurCfa(cfa) === co ? " selected" : "") + '>' + ["Noir", "Beige", "Blanc bordé", "Gris", "Gris clair", "Crème"][i] + '</option>'; }).join("") + '</select></td><td>' + (clientDeCfa(cfa) ? esc(clientDeCfa(cfa).nom) : '<span class="muet">aucun client</span>') + '</td></tr>';
   });
@@ -2851,6 +2860,223 @@ function initDrive(){
   DRIVE.accueil = !!D;                                        // ouverture : se connecter d'abord pour avoir les dernières données
   majSauvegarde(); rendre();
 }
+
+/* ---- 14_galia.js ---- */
+/* =====================================================================
+   IMPORT DU PLANNING GALIA (fichier Excel)
+   Chaque demi-journée du planning prend le code « classe - site » du cours
+   Galia au même créneau. Sans cours Galia, le code reste et reçoit la note
+   « Non positionné sur Galia ». Les montants ne changent pas : un code de
+   classe sans tarif propre utilise le tarif de son CFA. Rien n'est appliqué
+   sans validation, et l'import peut être annulé.
+   ===================================================================== */
+var NOTE_GALIA = "Non positionné sur Galia";
+
+/* ---------- Lecture d'un .xlsx (zip + XML), sans bibliothèque ---------- */
+async function lireXlsx(fichier){
+  var buf = new Uint8Array(await fichier.arrayBuffer()), dv = new DataView(buf.buffer), fin = -1, dec = new TextDecoder();
+  for(var i = buf.length - 22; i >= Math.max(0, buf.length - 65557); i--) if(dv.getUint32(i, true) === 0x06054b50){ fin = i; break; }
+  if(fin < 0) throw new Error("Ce fichier n'est pas un classeur Excel (.xlsx)");
+  var n = dv.getUint16(fin + 10, true), pos = dv.getUint32(fin + 16, true), zip = {};
+  for(var k = 0; k < n; k++){
+    var ln = dv.getUint16(pos + 28, true);
+    zip[dec.decode(buf.subarray(pos + 46, pos + 46 + ln))] = {methode: dv.getUint16(pos + 10, true), taille: dv.getUint32(pos + 20, true), local: dv.getUint32(pos + 42, true)};
+    pos += 46 + ln + dv.getUint16(pos + 30, true) + dv.getUint16(pos + 32, true);
+  }
+  async function texte(nom){
+    var f = zip[nom]; if(!f) return null;
+    var debut = f.local + 30 + dv.getUint16(f.local + 26, true) + dv.getUint16(f.local + 28, true), brut = buf.subarray(debut, debut + f.taille);
+    if(f.methode === 0) return dec.decode(brut);
+    if(typeof DecompressionStream === "undefined") throw new Error("Ce navigateur ne sait pas lire les fichiers Excel : utilise Chrome ou Safari à jour");
+    return new Response(new Blob([brut]).stream().pipeThrough(new DecompressionStream("deflate-raw"))).text();
+  }
+  function xml(s){ return new DOMParser().parseFromString(s, "application/xml"); }
+  function tous(doc, nom){ return Array.prototype.slice.call(doc.getElementsByTagNameNS("*", nom)); }
+  function colonne(ref){ var c = /^[A-Z]+/.exec(ref || "A")[0], v = 0; for(var i = 0; i < c.length; i++) v = v * 26 + c.charCodeAt(i) - 64; return v - 1; }
+  var partages = [], ss = await texte("xl/sharedStrings.xml");
+  if(ss) partages = tous(xml(ss), "si").map(function(si){ return tous(si, "t").map(function(t){ return t.textContent; }).join(""); });
+  var wb = await texte("xl/workbook.xml"), rels = await texte("xl/_rels/workbook.xml.rels");
+  if(!wb || !rels) throw new Error("Ce fichier n'est pas un classeur Excel (.xlsx)");
+  var cibles = {}, feuilles = [];
+  tous(xml(rels), "Relationship").forEach(function(r){ cibles[r.getAttribute("Id")] = r.getAttribute("Target"); });
+  var liste = tous(xml(wb), "sheet");
+  for(var s = 0; s < liste.length; s++){
+    var id = liste[s].getAttributeNS("http://schemas.openxmlformats.org/officeDocument/2006/relationships", "id") || liste[s].getAttribute("r:id");
+    var chemin = String(cibles[id] || "").replace(/^\//, ""); if(chemin.indexOf("xl/") !== 0) chemin = "xl/" + chemin;
+    var contenu = await texte(chemin); if(!contenu) continue;
+    var lignes = tous(xml(contenu), "row").map(function(row){
+      var l = [];
+      tous(row, "c").forEach(function(c){
+        var t = c.getAttribute("t"), v = tous(c, "v")[0], val = null;
+        if(t === "s" && v) val = partages[+v.textContent];
+        else if(t === "inlineStr") val = tous(c, "t").map(function(x){ return x.textContent; }).join("");
+        else if(v) val = t === "str" || t === "b" ? v.textContent : (isNaN(+v.textContent) ? v.textContent : +v.textContent);
+        l[colonne(c.getAttribute("r"))] = val;
+      });
+      return l;
+    });
+    feuilles.push({nom: liste[s].getAttribute("name"), lignes: lignes});
+  }
+  return feuilles;
+}
+function dateExcel(v){
+  if(typeof v === "number" && v > 20000 && v < 80000) return new Date(Date.UTC(1899, 11, 30) + Math.round(v) * 86400000).toISOString().slice(0, 10);
+  var s = String(v == null ? "" : v).trim(), m;
+  if((m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s))) return m[1] + "-" + m[2] + "-" + m[3];
+  if((m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})/.exec(s))) return m[3] + "-" + deux(+m[2]) + "-" + deux(+m[1]);
+  return null;
+}
+function heureExcel(v){
+  if(typeof v === "number") return v < 1 ? v * 24 : (v < 24 ? v : null);          // 0,354 = 8 h 30
+  var m = /^(\d{1,2})\s*[:h]\s*(\d{2})?/.exec(String(v == null ? "" : v).trim());
+  return m ? +m[1] + (+m[2] || 0) / 60 : null;
+}
+function chercheColonne(l, re){ for(var j = 0; j < l.length; j++) if(re.test(l[j] || "")) return j; return -1; }
+/* Cours lus dans toutes les feuilles qui ont les colonnes « Date » et « Classe - Site » */
+function coursGalia(feuilles){
+  var cours = [];
+  feuilles.forEach(function(f){
+    var col = null;
+    for(var i = 0; i < Math.min(15, f.lignes.length) && !col; i++){
+      var l = Array.prototype.map.call(f.lignes[i] || [], function(x){ return String(x == null ? "" : x).trim().toLowerCase(); });
+      var cs = chercheColonne(l, /classe.*site/);
+      if(l.indexOf("date") >= 0 && cs >= 0) col = {ligne: i, date: l.indexOf("date"), cs: cs, debut: chercheColonne(l, /^d[ée]but/), classe: l.indexOf("classe"), site: l.indexOf("site"), formation: chercheColonne(l, /^formation/)};
+    }
+    if(!col) return;
+    f.lignes.slice(col.ligne + 1).forEach(function(l){
+      if(!l) return;
+      var date = dateExcel(l[col.date]), code = String(l[col.cs] == null ? "" : l[col.cs]).trim();
+      if(!date || !code) return;
+      var h = col.debut >= 0 ? heureExcel(l[col.debut]) : null, morceaux = code.split(" - ");
+      var g = {date: date, k: h != null && h >= 12 ? "a" : "m", code: code,
+        classe: col.classe >= 0 && plein(l[col.classe]) ? String(l[col.classe]).trim() : morceaux.slice(0, -1).join(" - ") || code,
+        site: col.site >= 0 && plein(l[col.site]) ? String(l[col.site]).trim() : morceaux[morceaux.length - 1],
+        formation: col.formation >= 0 ? String(l[col.formation] == null ? "" : l[col.formation]) : ""};
+      g.np = /non positionn/i.test(g.formation) || !!codeInfo(g.classe);   // cours non positionné (ex. « GA 42 - ST ETIENNE »)
+      cours.push(g);
+    });
+  });
+  return cours;
+}
+
+/* ---------- Ce que l'import va changer ---------- */
+function sitesGalia(cours){ var r = []; cours.forEach(function(g){ if(r.indexOf(g.site) < 0) r.push(g.site); }); return r.sort(); }
+function correspondanceGalia(cours){
+  var votes = {}, r = {};
+  function vote(site, cfa, n){ var v = votes[site] || (votes[site] = {}); v[cfa] = (v[cfa] || 0) + n; }
+  cours.forEach(function(g){
+    if(g.np){ if(codeInfo(g.classe)) vote(g.site, cfaDe(g.classe), 5); return; }
+    var c = cellule(g.date, g.k); if(c && c.c) vote(g.site, cfaDe(c.c), 1);
+  });
+  sitesGalia(cours).forEach(function(site){
+    var v = votes[site] || {}, best = "";
+    Object.keys(v).forEach(function(cfa){ if(!best || v[cfa] > v[best]) best = cfa; });
+    r[site] = best;
+  });
+  return r;
+}
+function noteGalia(c){ return !!(c && plein(c.n) && c.n.indexOf(NOTE_GALIA) >= 0); }
+function sansNoteGalia(n){ return String(n || "").split("\n").filter(function(x){ return x.trim() !== NOTE_GALIA; }).join("\n").trim(); }
+function planGalia(cours, du, au, corresp, ajouter){
+  var G = {}, cfas = [], r = {classes: [], notes: [], absents: [], conflits: [], deja: 0, codes: [], modifs: []};
+  Object.keys(corresp).forEach(function(s){ if(corresp[s] && cfas.indexOf(corresp[s]) < 0) cfas.push(corresp[s]); });
+  cours.forEach(function(g){ if(!g.np && g.date >= du && g.date <= au) G[g.date + g.k] = g; });
+  function nouveauCode(g, cfa){ if(!codeInfo(g.code) && !r.codes.some(function(x){ return x.code === g.code; })) r.codes.push({code: g.code, cfa: cfa, classe: g.classe}); }
+  Object.keys(G).sort().forEach(function(cle){
+    var g = G[cle], cfaG = corresp[g.site], c = cellule(g.date, g.k), code = c && c.c;
+    if(!cfaG){ r.conflits.push({date: g.date, k: g.k, code: code || "", galia: g.code, raison: "site sans code"}); return; }
+    if(!code){ r.absents.push(g); if(ajouter){ r.modifs.push({date: g.date, k: g.k, code: g.code}); nouveauCode(g, cfaG); } return; }
+    if(cfaDe(code) !== cfaG){ r.conflits.push({date: g.date, k: g.k, code: code, galia: g.code, raison: cfas.indexOf(cfaDe(code)) >= 0 ? "autre site" : "autre client"}); return; }
+    if(code === g.code && !noteGalia(c)){ r.deja++; return; }
+    r.classes.push({date: g.date, k: g.k, avant: code, code: g.code});
+    r.modifs.push({date: g.date, k: g.k, code: g.code}); nouveauCode(g, cfaG);
+  });
+  // demi-journées du planning (CFA de ces sites) sans cours Galia : le code reste, avec la note
+  Object.keys(D.planning).forEach(function(an){
+    Object.keys(D.planning[an]).forEach(function(jour){
+      if(jour < du || jour > au) return;
+      ["m", "a"].forEach(function(k){
+        var c = D.planning[an][jour][k];
+        if(!c || !c.c || cfas.indexOf(cfaDe(c.c)) < 0 || G[jour + k] || noteGalia(c)) return;
+        r.notes.push({date: jour, k: k, code: c.c}); r.modifs.push({date: jour, k: k, note: true});
+      });
+    });
+  });
+  r.notes.sort(function(a, b){ return (a.date + (a.k === "m" ? 0 : 1)).localeCompare(b.date + (b.k === "m" ? 0 : 1)); });
+  return r;
+}
+function appliquerGalia(r){
+  var avant = {planning: copie(D.planning), codes: copie(D.codes)};
+  r.codes.forEach(function(x){ D.codes.push({code: x.code, cfa: x.cfa, afficher: true, libelle: "Cours " + x.classe}); });
+  r.modifs.forEach(function(m){
+    var c = copie(cellule(m.date, m.k) || {});
+    if(m.code){ c.c = m.code; c.n = sansNoteGalia(c.n); if(!c.n) delete c.n; }
+    if(m.note) c.n = plein(c.n) ? c.n + "\n" + NOTE_GALIA : NOTE_GALIA;
+    ecrireCellule(m.date, m.k, c);
+  });
+  sauver(); rendre();
+  return avant;
+}
+
+/* ---------- Écrans ---------- */
+function creneauTexte(x){ return dateFr(x.date) + " " + (x.k === "m" ? "matin" : "après-midi"); }
+function listeGalia(items, f){
+  if(!items.length) return "";
+  return '<div class="ga-liste">' + items.map(function(x){ return '<div>' + esc(creneauTexte(x)) + ' · ' + f(x) + '</div>'; }).join("") + '</div>';
+}
+function resumeGalia(r){
+  var h = '<p><b>' + r.classes.length + ' demi-journée' + (r.classes.length > 1 ? "s" : "") + '</b> prennent le code de leur classe' + (r.classes[0] ? ' (ex. ' + esc(r.classes[0].code) + ')' : '') + '.</p>';
+  h += '<p><b>' + r.notes.length + ' demi-journée' + (r.notes.length > 1 ? "s" : "") + '</b> gardent leur code, avec la note « ' + NOTE_GALIA + ' ».</p>' + listeGalia(r.notes, function(x){ return esc(x.code); });
+  if(r.codes.length) h += '<p><b>' + r.codes.length + ' code' + (r.codes.length > 1 ? "s" : "") + ' de classe</b> seront ajoutés à la liste : ' + r.codes.map(function(x){ return esc(x.code); }).join(", ") + '.</p>';
+  if(r.absents.length) h += '<p><b>' + r.absents.length + ' cours Galia</b> ne sont pas dans ton planning :</p>' + listeGalia(r.absents, function(x){ return esc(x.code); }) +
+    '<label class="case" style="margin:6px 0 4px"><input type="checkbox" id="ga-ajout"' + (r.ajouter ? " checked" : "") + '> Les ajouter aussi à mon planning</label>';
+  if(r.conflits.length) h += '<p><b>' + r.conflits.length + ' créneau' + (r.conflits.length > 1 ? "x" : "") + ' non modifié' + (r.conflits.length > 1 ? "s" : "") + '</b> (ton planning indique autre chose) :</p>' +
+    listeGalia(r.conflits, function(x){ return esc(x.code || "vide") + ' / Galia : ' + esc(x.galia); });
+  if(r.deja) h += '<p class="muet">Déjà à jour : ' + r.deja + ' demi-journée' + (r.deja > 1 ? "s" : "") + '.</p>';
+  return h + '<p class="aide">Les montants ne changent pas : chaque classe garde le tarif de son site (Paramètres > Tarifs).</p>';
+}
+async function ouvrirImportGalia(fichier){
+  var cours;
+  try{ cours = coursGalia(await lireXlsx(fichier)); }
+  catch(e){ toast(e.message || "Fichier illisible"); return; }
+  if(!cours.length){ toast("Aucun cours trouvé : le fichier doit avoir les colonnes « Date », « Début » et « Classe - Site »"); return; }
+  var debut = 2000 + +anneeScolaire(moisCourant()).slice(0, 2), sites = sitesGalia(cours), corresp = correspondanceGalia(cours), cfas = listeCfa();
+  var etat = {du: (debut) + "-08-01", au: (debut + 1) + "-08-31", ajouter: false};
+  ouvrirModal('<div class="kick">Planning</div><h2>Importer le planning Galia</h2>' +
+    '<p class="aide" style="margin-top:-6px">' + esc(fichier.name) + ' · ' + cours.length + ' cours lus</p>' +
+    '<div class="ligne-champs c2"><label class="champ"><span>Du</span><input class="in" type="date" id="ga-du" value="' + etat.du + '"></label><label class="champ"><span>Au</span><input class="in" type="date" id="ga-au" value="' + etat.au + '"></label></div>' +
+    '<div class="ligne-champs c2">' + sites.map(function(s, i){
+      return '<label class="champ"><span>Site ' + esc(s) + '</span><select class="in" id="ga-site-' + i + '"><option value="">Ne pas toucher</option>' +
+        cfas.map(function(c){ return '<option' + (c === corresp[s] ? " selected" : "") + '>' + esc(c) + '</option>'; }).join("") + '</select></label>';
+    }).join("") + '</div>' +
+    '<div id="ga-resume" class="ga-resume"></div>' +
+    '<div class="modal-acts"><button class="btn" data-fermer>Annuler</button><button class="btn pri" id="ga-ok">Appliquer</button></div>', true);
+  var r = null;
+  function calcul(){
+    etat.du = $("ga-du").value || etat.du; etat.au = $("ga-au").value || etat.au;
+    sites.forEach(function(s, i){ corresp[s] = $("ga-site-" + i).value; });
+    r = planGalia(cours, etat.du, etat.au, corresp, etat.ajouter); r.ajouter = etat.ajouter;
+    $("ga-resume").innerHTML = resumeGalia(r);
+    if($("ga-ajout")) $("ga-ajout").onchange = function(){ etat.ajouter = this.checked; calcul(); };
+    $("ga-ok").disabled = !r.modifs.length;
+  }
+  $("ga-du").onchange = calcul; $("ga-au").onchange = calcul;
+  sites.forEach(function(s, i){ $("ga-site-" + i).onchange = calcul; });
+  calcul();
+  $("ga-ok").onclick = function(){
+    var bilan = {classes: r.classes.length, notes: r.notes.length, codes: r.codes.length, ajouts: r.ajouter ? r.absents.length : 0};
+    var avant = appliquerGalia(r);
+    ouvrirModal('<h2>Planning Galia importé</h2><p>' + bilan.classes + ' demi-journée(s) avec le code de leur classe, ' + bilan.notes + ' note(s) « ' + NOTE_GALIA + ' »' +
+      (bilan.codes ? ', ' + bilan.codes + ' nouveau(x) code(s)' : '') + (bilan.ajouts ? ', ' + bilan.ajouts + ' cours ajouté(s)' : '') + '.</p>' +
+      '<div class="modal-acts"><button class="btn" id="ga-annuler">Annuler l’import</button><button class="btn pri" data-fermer>Fermer</button></div>');
+    $("ga-annuler").onclick = function(){ D.planning = avant.planning; D.codes = avant.codes; sauver(); fermerModal(); rendre(); toast("Import annulé : planning remis comme avant"); };
+  };
+}
+ACTIONS["galia-importer"] = function(){
+  var i = document.createElement("input"); i.type = "file"; i.accept = ".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"; i.hidden = true;
+  i.onchange = function(){ var f = i.files && i.files[0]; i.remove(); if(f) ouvrirImportGalia(f); };
+  document.body.appendChild(i); i.click();
+};
 
 /* ---- 99_demarrage.js ---- */
 /* =====================================================================
