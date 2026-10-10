@@ -2363,7 +2363,8 @@ PARAM.tarifs = function(){
       c("heuresDemi", 60, true) + c("taux", 70, true) + c("forfait", 70, true) + c("libelle", 200) +
       '<td><button class="ico-btn" data-act="tarif-moins" data-id="' + t.id + '" title="Supprimer">' + ICO.corbeille + '</button></td></tr>';
   });
-  return h + '</tbody></table></div><p class="aide" style="margin-top:10px">« H / demi-j. » : durée d’une demi-journée chez ce CFA (elle sert à compter les heures du planning).</p></div>';
+  h += '</tbody></table></div><p class="aide" style="margin-top:10px">« H / demi-j. » : durée d’une demi-journée chez ce CFA (elle sert à compter les heures du planning).</p></div>';
+  return h + tarifsClassesHTML();
 };
 CHANGE.tarif = function(el){
   var id = el.getAttribute("data-id"), t = D.tarifs.filter(function(x){ return x.id === id; })[0], k = el.getAttribute("data-champ"), v = el.value;
@@ -2372,6 +2373,27 @@ CHANGE.tarif = function(el){
   if(t.mode === "jour" && (k === "taux" || k === "heuresDemi") && t.taux && t.heuresDemi) t.forfait = arrondi(2 * t.heuresDemi * t.taux, 2);
   if(t.mode === "jour" && k === "forfait" && t.forfait && t.heuresDemi) t.taux = t.forfait / (2 * t.heuresDemi);
   if(el.tagName === "SELECT" || el.getAttribute("data-quand") === "change"){ sauver(); rendre(); } else planifier();
+};
+/* Classes (codes sans tarif propre) : elles utilisent le tarif de leur CFA */
+function tarifsClassesHTML(){
+  var cl = D.codes.filter(function(c){ var t = tarif(c.code); return !t || t.code !== c.code; });
+  if(!cl.length) return "";
+  var h = '<div class="bloc"><h2>Classes et codes sans tarif propre</h2>' +
+    '<p class="aide" style="margin:-4px 0 12px">Ces codes utilisent le tarif de leur CFA : si le tarif du CFA change, ils suivent. « Tarif propre » crée une ligne dans le tableau ci-dessus, pour une classe payée différemment.</p>' +
+    '<div class="tab-wrap"><table class="t"><thead><tr><th>Code</th><th>CFA</th><th>Tarif utilisé</th><th>Libellé sur la facture</th><th></th></tr></thead><tbody>';
+  cl.sort(function(a, b){ return (a.cfa + a.code).localeCompare(b.cfa + b.code); }).forEach(function(c){
+    var t = tarif(c.code), i = D.codes.indexOf(c);
+    h += '<tr><td><b>' + esc(c.code) + '</b>' + (c.afficher === false ? ' <span class="muet">(masqué)</span>' : '') + '</td><td>' + chipCode(c.cfa) + '</td>' +
+      '<td>' + (t ? esc(t.code) + ' : ' + (t.mode === "jour" ? euros(+t.forfait || 0) + ' la journée' : t.mode === "manuel" ? 'montant manuel' : qte(t.heuresDemi) + ' h la demi-journée, ' + euros(+t.taux || 0) + ' de l’heure') : '<span class="st st-retard">Aucun</span>') + '</td>' +
+      '<td>' + esc(c.libelle || (t && t.libelle) || c.code) + '</td>' +
+      '<td>' + (t ? '<button class="btn petit" data-act="tarif-propre" data-i="' + i + '">Tarif propre</button>' : '') + '</td></tr>';
+  });
+  return h + '</tbody></table></div></div>';
+}
+ACTIONS["tarif-propre"] = function(el){
+  var c = D.codes[+el.getAttribute("data-i")], t = c && tarif(c.code); if(!t) return;
+  var n = copie(t); n.id = uid("t"); n.code = c.code; n.cfa = c.cfa; n.formation = ""; if(c.libelle) n.libelle = c.libelle; n.commentaire = "";
+  D.tarifs.push(n); sauver(); rendre(); toast("Tarif propre créé pour " + c.code + " : modifie-le dans le tableau des tarifs");
 };
 ACTIONS["tarif-plus"] = function(){ D.tarifs.push({id: uid("t"), code: "", cfa: "", formation: "", effet: aujourdhui(), mode: "heure", heuresDemi: 3.5, taux: 0, libelle: "Cours"}); sauver(); rendre(); };
 ACTIONS["tarif-moins"] = function(el){
