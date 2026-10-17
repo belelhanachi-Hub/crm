@@ -412,6 +412,28 @@ details.bloc summary{cursor:pointer;font-size:16px}
   .petit-sel{width:100%;min-width:0}
   .op-lib{max-width:100%;white-space:normal}
 }
+/* Planning et encaissements */
+table.ec-mois tr.ec-tete td{background:var(--beige3);border-top:1.5px solid var(--ink)}
+tr.ec-rouge td{background:var(--errb)}
+tr.ec-beige td{background:var(--beige3)}
+.ec-det{font-size:12.5px;margin-top:2px;line-height:1.5}
+.ec-det .lien{font-size:12.5px}
+.ec-msg{font-size:13px;color:var(--ink2);margin-top:3px;line-height:1.35}
+.ec-msg.n2{color:var(--err);font-weight:700}
+@media (max-width:760px){
+  table.mob-ec thead{display:none}
+  table.mob-ec, table.mob-ec tbody, table.mob-ec tfoot{display:block;width:100%}
+  table.mob-ec tr{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:3px 8px;padding:10px 12px;border-bottom:1px solid var(--line)}
+  table.mob-ec td{display:block;border:0;padding:0;white-space:normal}
+  table.mob-ec td:nth-child(1), table.mob-ec td:nth-child(2), table.mob-ec td:nth-child(6){grid-column:1/4}
+  table.mob-ec td:nth-child(1):empty{display:none}
+  table.mob-ec td.num::before{display:block;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3);font-weight:700;text-align:right}
+  table.mob-ec td:nth-child(3)::before{content:"Prévu"}
+  table.mob-ec td:nth-child(4)::before{content:"Facturé"}
+  table.mob-ec td:nth-child(5)::before{content:"Encaissé"}
+  table.mob-ec tr.ec-tete td:nth-child(1){grid-column:1/4}
+  table.mob-ec tr.ec-tete td:last-child:empty{display:none}
+}
 
 </style>
 </head>
@@ -3757,10 +3779,10 @@ function badgeCompta(){
   return tiersAClasser() + Object.keys(rapprochement().props).length;
 }
 
-VUES.comptabilite = function(perUrl, onglet){
+VUES.comptabilite = function(perUrl, onglet, anUrl){
   var B = banque(), annees = anneesReleve();
   var per = perUrl && (perUrl === "tout" || annees.indexOf(perUrl) >= 0) ? perUrl : (annees.indexOf(aujourdhui().slice(0, 4)) >= 0 ? aujourdhui().slice(0, 4) : annees[0] || "tout");
-  onglet = ["resume", "rappro", "operations"].indexOf(onglet) >= 0 ? onglet : "resume";
+  onglet = ["resume", "rappro", "ecarts", "operations"].indexOf(onglet) >= 0 ? onglet : "resume";
   var h = '<div class="page"><div class="p-tete"><div><div class="kick">Banque</div><h1 class="p-titre">Comptabilité</h1>' +
     '<p class="p-sous">Les entrées et les sorties de ton compte, et la vérification que chaque facture a bien été encaissée.</p></div>' +
     '<div class="barre-actions"><button class="btn pri" data-act="banque-import">' + ICO.telecharger + ' Importer un relevé</button>' +
@@ -3775,11 +3797,12 @@ VUES.comptabilite = function(perUrl, onglet){
     annees.map(function(a){ return '<option value="' + a + '"' + (a === per ? " selected" : "") + '>Année ' + a + '</option>'; }).join("") +
     '<option value="tout"' + (per === "tout" ? " selected" : "") + '>Tout le relevé</option></select></label>' +
     '<p class="aide" style="margin:0 0 6px">' + (B.compte ? esc(B.compte) + ' · ' : '') + 'relevé du ' + esc(dateFr(R.cov.du)) + ' au ' + esc(dateFr(R.cov.au)) + ' · ' + B.ops.length + ' opérations</p></div>';
-  h += '<div class="onglets">' + [["resume", "Résumé"], ["rappro", "Factures et virements", nProps], ["operations", "Opérations", nClasser]].map(function(o){
+  h += '<div class="onglets">' + [["resume", "Résumé"], ["rappro", "Factures et virements", nProps], ["ecarts", "Planning et encaissements", nbEcarts()], ["operations", "Opérations", nClasser]].map(function(o){
     return '<button class="onglet' + (o[0] === onglet ? " on" : "") + '" data-act="aller" data-v="comptabilite/' + per + '/' + o[0] + '">' + o[1] + (o[2] ? ' <span class="n-badge">' + o[2] + '</span>' : '') + '</button>';
   }).join("") + '</div>';
   if(onglet === "resume") h += resumeCompta(per, R, nProps, nClasser);
   else if(onglet === "rappro") h += rapproHTML(R);
+  else if(onglet === "ecarts") h += ecartsHTML(anUrl, per);
   else h += operationsHTML(per);
   return h + '</div>';
 };
@@ -3929,6 +3952,204 @@ function operationsHTML(per){
   }).join("") + '</tbody></table></details>';
   return h;
 }
+
+/* ---- 17_ecarts.js ---- */
+/* =====================================================================
+   PLANNING ET ENCAISSEMENTS : pour chaque mois et chaque client, ce qui
+   était prévu au planning, ce qui a été facturé et ce qui est arrivé sur
+   le compte. Chaque écart est expliqué en clair.
+   - Prévu : planning (heures x tarif) et montants ajoutés au mois.
+   - Facturé : factures émises pour ce mois (avoirs déduits).
+   - Encaissé : virements du relevé, rattachés au mois de la facture qu'ils
+     paient ; un virement sans facture est rattaché au mois écrit dans son
+     libellé (numéro de facture, « 05.2026 »), sinon au mois précédent.
+   ===================================================================== */
+var TOL_ECART = 0.5;
+
+function moisDuVirement(op){
+  var n = numerosDansLibelle(op.lib);
+  if(n.length) return {mois: n[0].slice(0, 4) + "-" + n[0].slice(4, 6), sur: true};
+  var re = /(\d{1,2}[.\/])?(0[1-9]|1[0-2])[.\/](20\d\d)(?!\d)/g, m;
+  while((m = re.exec(op.lib))){ if(!m[1]) return {mois: m[3] + "-" + m[2], sur: true}; }   // « 05.2026 », pas une date « 04.08.2026 »
+  return {mois: ajouterMois(moisDe(op.d), -1), sur: false};
+}
+function delaiDe(cle){ var c = client(cle); return c && c.delai != null && c.delai !== "" ? +c.delai : +D.reglages.delaiRetard || 30; }
+function nomCle(cle){
+  if(cle === "inconnu") return "Client non reconnu";
+  if(cle.indexOf("cfa:") === 0) return cle.slice(4);
+  var c = client(cle); return c ? (c.court || c.nom) : cle;
+}
+
+/* Facture annulée par un avoir : celle qu'il désigne, sinon une facture du même client, du même montant, émise avant lui */
+function factureAnnulee(a){
+  if(a.avoirDe) return facture(a.avoirDe);
+  var m = Math.abs(totalAffiche(a)), best = null;
+  D.factures.forEach(function(f){
+    if(f.type !== "facture" || f.clientId !== a.clientId || !emise(f) || Math.abs(totalAffiche(f) - m) > 0.01 || (f.date || "") > (a.date || "")) return;
+    if(!best || (f.date || "") > (best.date || "")) best = f;
+  });
+  return best;
+}
+
+function croisement(an){
+  var mois = moisDeLAnnee(an), cov = couvertureReleve(), R = rapprochement(), lignes = {};
+  function L(m, cle){ var k = m + "|" + cle; return lignes[k] || (lignes[k] = {mois: m, cle: cle, prevu: 0, facture: 0, encaisse: 0, factures: [], virements: []}); }
+  // prévu au planning
+  mois.forEach(function(m){
+    var a = activiteMois(m);
+    Object.keys(a.parCfa).forEach(function(cfa){ var c = clientDeCfa(cfa); if(a.parCfa[cfa].ca) L(m, c ? c.id : "cfa:" + cfa).prevu += a.parCfa[cfa].ca; });
+  });
+  // facturé (un avoir compte dans le mois de la facture qu'il annule)
+  D.factures.forEach(function(f){
+    var annulee = f.type === "avoir" ? factureAnnulee(f) : null, m = annulee ? annulee.mois : f.mois;
+    if(!emise(f) || mois.indexOf(m) < 0) return;
+    var l = L(m, f.clientId); l.facture += totalAffiche(f);
+    if(f.type === "facture") l.factures.push(f.id); else if(annulee) (l.annulees = l.annulees || []).push(annulee.id);
+  });
+  // encaissé (relevé bancaire)
+  if(cov) banque().ops.forEach(function(o){
+    if(o.m <= 0) return;
+    var ids = o.f && o.f.length ? o.f : R.props[o.id] ? R.props[o.id].ids : null;
+    if(ids){
+      var fs = ids.map(facture).filter(Boolean), tot = 0;
+      fs.forEach(function(f){ tot += Math.max(0, totalAffiche(f)); });
+      fs.forEach(function(f){
+        if(mois.indexOf(f.mois) < 0) return;
+        var part = fs.length === 1 || !tot ? o.m : arrondi(o.m * Math.max(0, totalAffiche(f)) / tot, 2), l = L(f.mois, f.clientId);
+        l.encaisse += part; l.virements.push({op: o, montant: part, lie: !!(o.f && o.f.length), facture: f.id});
+      });
+      return;
+    }
+    if(categorie(o) !== "client") return;
+    var mv = moisDuVirement(o); if(mois.indexOf(mv.mois) < 0) return;
+    var cls = clientDuLibelle(o.lib), cle = cls[0] || "inconnu";
+    if(cls.length > 1){   // même payeur pour plusieurs clients (ex. deux sites) : celui dont le planning du mois a ce montant
+      var exact = cls.filter(function(c){ var x = lignes[mv.mois + "|" + c]; return x && Math.abs(x.prevu - o.m) < 0.01; });
+      var actif = cls.filter(function(c){ var x = lignes[mv.mois + "|" + c]; return x && x.prevu > 0 && !x.facture; });
+      cle = exact[0] || actif[0] || cls[0];
+    }
+    var l = L(mv.mois, cle); l.encaisse += o.m; l.virements.push({op: o, montant: o.m, lie: false, sansFacture: true, estime: !mv.sur});
+  });
+  // diagnostic de chaque ligne
+  var liste = Object.keys(lignes).map(function(k){ var l = lignes[k]; diagnostic(l, cov); return l; })
+    .sort(function(a, b){ return a.mois.localeCompare(b.mois) || nomCle(a.cle).localeCompare(nomCle(b.cle)); });
+  // montant prévu sans client (code « AUTRE ») : sans doute facturé avec un client du même mois
+  liste.forEach(function(x){
+    if(x.cle.indexOf("cfa:") !== 0 || x.prevu < TOL_ECART || x.facture > TOL_ECART || x.encaisse > TOL_ECART) return;
+    var hote = liste.filter(function(l){ return l !== x && l.mois === x.mois && l.cle.indexOf("cfa:") !== 0 &&
+      (Math.abs(l.encaisse - l.prevu - x.prevu) < 0.01 || Math.abs(l.facture - l.prevu - x.prevu) < 0.01); })[0];
+    if(!hote) return;
+    x.msgs = [{n: 0, t: "Payé avec " + nomCle(hote.cle) + " (montant compris dans son virement)"}]; x.niveau = 0;
+    hote.ajout = x.prevu; x.absorbe = true;
+    diagnostic(hote, cov); hote.msgs.push({n: 0, t: "Dont " + euros(x.prevu) + " prévus en « " + nomCle(x.cle) + " »"});
+  });
+  return {an: an, mois: mois, lignes: liste, cov: cov};
+}
+function diagnostic(l, cov){
+  l.prevu = arrondi(l.prevu, 2); l.facture = arrondi(l.facture, 2); l.encaisse = arrondi(l.encaisse, 2); l.msgs = [];
+  var t = TOL_ECART, p = arrondi(l.prevu + (l.ajout || 0), 2), f = l.facture, e = l.encaisse;
+  var fin = finDeMois(l.mois), attendu = ajouterJours(fin, delaiDe(l.cle));
+  var aVenir = l.mois + "-01" > aujourdhui(), enCours = !aVenir && fin >= aujourdhui();
+  var pasEncoreDu = !cov || attendu > cov.au;
+  var horsReleve = cov && attendu < cov.du && e < t;
+  l.attendu = attendu; l.echu = !aVenir && !enCours; l.du = l.echu && !pasEncoreDu && !horsReleve;
+  function msg(niveau, texte){ l.msgs.push({n: niveau, t: texte}); }
+  if(p > t && f < t){
+    if(e > t) msg(2, "Encaissé, mais aucune facture dans le CRM pour ce mois");
+    else if(aVenir) msg(0, "À venir");
+    else if(enCours) msg(0, "Mois en cours : pas encore facturé");
+    else msg(2, "Prévu au planning, pas facturé" + (pasEncoreDu ? "" : " ni encaissé"));
+  } else if(f > t && Math.abs(f - p) > t){
+    msg(1, p > t ? "Facturé " + (f > p ? "plus" : "moins") + " que le planning (" + (f > p ? "+" : "") + euros(f - p) + ")" : "Facturé sans activité au planning");
+  }
+  if(f < t && p < t && e > t) msg(2, "Encaissé, sans planning ni facture pour ce mois");
+  if(f > t){
+    if(horsReleve) msg(0, "Paiement antérieur au relevé : non vérifiable");
+    else if(e < f - t){
+      var payees = {}; l.virements.forEach(function(v){ if(v.facture) payees[v.facture] = 1; });
+      var sans = l.factures.filter(function(id){ return !payees[id] && (l.annulees || []).indexOf(id) < 0; }).map(function(id){ return (facture(id) || {}).numero; });
+      var quelles = sans.length ? " : " + (sans.length > 1 ? "factures " : "facture ") + sans.join(", ") + " sans virement" : "";
+      msg(pasEncoreDu ? 0 : 2, pasEncoreDu ? "Paiement attendu vers le " + dateFr(attendu) + (e > t ? " (reste " + euros(f - e) + ")" : "") : (e > t ? "Payé en partie, il manque " + euros(f - e) : "Facturé, rien encaissé (" + euros(f) + ")") + quelles);
+    }
+    else if(e > f + t) msg(1, "Encaissé plus que facturé (+" + euros(e - f) + ")");
+  }
+  if(l.virements.some(function(v){ return v.sansFacture && v.estime; })) msg(1, "Mois du virement estimé (le libellé ne le précise pas)");
+  l.niveau = l.msgs.reduce(function(m, x){ return Math.max(m, x.n); }, -1);
+}
+function etatChip(l){
+  if(l.absorbe) return '<span class="st st-payee">Inclus</span>';
+  if(l.niveau >= 2) return '<span class="st st-retard">À vérifier</span>';
+  if(l.niveau === 1) return '<span class="st st-emise">Écart</span>';
+  if(l.msgs.length) return '<span class="st st-brouillon">En attente</span>';
+  return '<span class="st st-payee">OK</span>';
+}
+function nbEcarts(){
+  if(!D || !D.banque || !D.banque.ops.length) return 0;
+  var an = anneeEcartsDefaut(); return an ? croisement(an).lignes.filter(function(l){ return l.niveau >= 2; }).length : 0;
+}
+function anneesEcarts(){
+  var cov = couvertureReleve(); if(!cov) return [];
+  return listeAnnees().filter(function(an){ var m = moisDeLAnnee(an); return finDeMois(m[11]) >= cov.du && m[0] + "-01" <= cov.au; });
+}
+function anneeEcartsDefaut(){
+  var cov = couvertureReleve(), best = null, n = -1;
+  anneesEcarts().forEach(function(an){
+    var k = moisDeLAnnee(an).filter(function(m){ return m >= moisDe(cov.du) && finDeMois(m) <= cov.au; }).length;
+    if(k > n){ n = k; best = an; }
+  });
+  return best;
+}
+
+function ecartsHTML(anUrl, per){
+  var annees = anneesEcarts(), an = idAnneeDeUrl(anUrl);
+  if(annees.indexOf(an) < 0) an = anneeEcartsDefaut();
+  if(!an) return '<p class="vide">Le relevé ne couvre aucune année du planning.</p>';
+  var C = croisement(an), tot = {prevu: 0, facture: 0, encaisse: 0}, ech = {prevu: 0, facture: 0, encaisse: 0, manque: 0}, dernier = null;
+  C.lignes.forEach(function(l){
+    tot.prevu += l.prevu; tot.facture += l.facture; tot.encaisse += l.encaisse;
+    if(!l.echu) return;
+    ech.prevu += l.prevu; ech.facture += l.facture; ech.encaisse += l.encaisse;
+    if(!dernier || l.mois > dernier) dernier = l.mois;
+    if(l.du) ech.manque += Math.max(0, l.facture - l.encaisse);
+  });
+  var aVoir = C.lignes.filter(function(l){ return l.niveau >= 1; });
+  var partiel = dernier && dernier < C.mois[11], jusque = dernier ? (partiel ? "jusqu'à fin " + moisTexte(dernier) : "année " + an) : "aucun mois terminé";
+  var h = '<div class="filtres"><label class="champ"><span>Année scolaire</span><select class="in" data-ch="ec-an" data-per="' + esc(per) + '">' +
+    annees.map(function(a){ return '<option value="' + a.replace("/", "-") + '"' + (a === an ? " selected" : "") + '>' + esc(a) + '</option>'; }).join("") + '</select></label>' +
+    '<p class="aide" style="margin:0 0 6px;max-width:720px">Prévu = ton planning. Facturé = factures du mois. Encaissé = virements reçus (relevé du ' + esc(dateFr(C.cov.du)) + ' au ' + esc(dateFr(C.cov.au)) + '), rattachés au mois de la facture qu\'ils paient.</p></div>';
+  h += '<div class="kpis"><div class="kpi"><div class="l">Prévu au planning</div><div class="v">' + eurosCourt(ech.prevu) + '</div><div class="s">' + esc(jusque) + (partiel ? " (" + eurosCourt(tot.prevu) + " sur l'année)" : "") + '</div></div>' +
+    '<div class="kpi"><div class="l">Facturé</div><div class="v">' + eurosCourt(ech.facture) + '</div><div class="s">' + (Math.abs(ech.facture - ech.prevu) > TOL_ECART ? (ech.facture > ech.prevu ? "+" : "") + euros(ech.facture - ech.prevu) + " par rapport au planning" : "comme le planning") + '</div></div>' +
+    '<div class="kpi noir"><div class="l">Encaissé à la banque</div><div class="v">' + eurosCourt(ech.encaisse) + '</div><div class="s">' + (ech.manque > TOL_ECART ? "il manque " + euros(ech.manque) + " sur des factures échues" : "aucune facture échue impayée") + '</div></div>' +
+    '<div class="kpi' + (aVoir.some(function(l){ return l.niveau >= 2; }) ? " alerte" : " beige") + '"><div class="l">Écarts à vérifier</div><div class="v">' + aVoir.filter(function(l){ return l.niveau >= 2; }).length + '</div><div class="s">+ ' + aVoir.filter(function(l){ return l.niveau === 1; }).length + ' petit(s) écart(s)</div></div></div>';
+  // écarts à vérifier
+  h += '<div class="bloc"><h2>Écarts à vérifier <span class="muet">' + aVoir.length + '</span></h2>';
+  if(!aVoir.length) h += '<p class="vide">Aucun écart : le planning, les factures et la banque concordent.</p>';
+  else h += '<div class="tab-wrap"><table class="t mob-ec"><thead><tr><th>Mois</th><th>Client</th><th class="num">Prévu</th><th class="num">Facturé</th><th class="num">Encaissé</th><th>Ce qui ne va pas</th></tr></thead><tbody>' +
+    aVoir.sort(function(a, b){ return b.niveau - a.niveau || a.mois.localeCompare(b.mois); }).map(function(l){ return ligneEcart(l, true); }).join("") + '</tbody></table></div>';
+  h += '</div>';
+  // mois par mois
+  h += '<div class="bloc" style="padding:0"><div class="tab-wrap"><table class="t mob-ec ec-mois"><thead><tr><th>Mois</th><th>Client</th><th class="num">Prévu</th><th class="num">Facturé</th><th class="num">Encaissé</th><th>État</th></tr></thead><tbody>';
+  C.mois.forEach(function(m){
+    var ls = C.lignes.filter(function(l){ return l.mois === m; });
+    if(!ls.length) return;
+    var t = {p: 0, f: 0, e: 0}; ls.forEach(function(l){ t.p += l.prevu; t.f += l.facture; t.e += l.encaisse; });
+    h += '<tr class="ec-tete"><td colspan="2"><b>' + esc(moisTitre(m)) + '</b></td><td class="num"><b>' + euros(t.p) + '</b></td><td class="num"><b>' + euros(t.f) + '</b></td><td class="num"><b>' + euros(t.e) + '</b></td><td></td></tr>';
+    h += ls.map(function(l){ return ligneEcart(l, false); }).join("");
+  });
+  h += '</tbody><tfoot><tr><td colspan="2"><b>Total ' + esc(an) + '</b></td><td class="num"><b>' + euros(tot.prevu) + '</b></td><td class="num"><b>' + euros(tot.facture) + '</b></td><td class="num"><b>' + euros(tot.encaisse) + '</b></td><td></td></tr></tfoot></table></div></div>';
+  h += '<p class="aide">Écart toléré : ' + euros(TOL_ECART) + '. Les virements « proposés » dans l\'onglet Factures et virements sont déjà comptés ici. Un paiement est attendu ' + D.reglages.delaiRetard + ' jours après la fin du mois (délai réglable par client).</p>';
+  return h;
+}
+function ligneEcart(l, avecMois){
+  var details = [];
+  l.factures.forEach(function(id){ var f = facture(id); if(f) details.push('<button class="lien" data-act="aller" data-v="facture/' + id + '">' + esc(f.numero) + '</button>'); });
+  l.virements.forEach(function(v){ details.push('<span class="muet">virement du ' + esc(dateFr(v.op.d)) + ' : ' + euros(v.montant) + (v.sansFacture ? ' (sans facture)' : '') + '</span>'); });
+  var cls = l.niveau >= 2 ? "ec-rouge" : l.niveau === 1 ? "ec-beige" : "";
+  return '<tr class="' + cls + '"><td>' + (avecMois ? '<b>' + esc(moisTitre(l.mois)) + '</b>' : '') + '</td><td>' + esc(nomCle(l.cle)) + (details.length ? '<div class="ec-det">' + details.join(" · ") + '</div>' : '') + '</td>' +
+    '<td class="num">' + euros(l.prevu) + '</td><td class="num">' + euros(l.facture) + '</td><td class="num">' + euros(l.encaisse) + '</td>' +
+    '<td>' + (avecMois ? l.msgs.filter(function(x){ return x.n >= 1; }).map(function(x){ return '<div class="ec-msg n' + x.n + '">' + esc(x.t) + '</div>'; }).join("") : etatChip(l) + (l.msgs.length ? '<div class="ec-msg">' + esc(l.msgs.map(function(x){ return x.t; }).join(" · ")) + '</div>' : '')) + '</td></tr>';
+}
+CHANGE["ec-an"] = function(el){ aller("comptabilite/" + (el.getAttribute("data-per") || "tout") + "/ecarts/" + el.value); };
 
 /* ---- 99_demarrage.js ---- */
 /* =====================================================================
