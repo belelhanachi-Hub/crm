@@ -24,7 +24,7 @@ except Exception:
 ICI = os.path.dirname(os.path.abspath(__file__))
 SOURCE = os.path.join(ICI, "..", "facturation-bf-conseil", "en_ligne")
 FICHIERS = ["index.html", "manifest.webmanifest", "icone-180.png", "icone-192.png", "icone-512.png"]
-CONFIDENTIEL = ("FR76", "929 011 369", "Jules Favre", "06 69 99 96 05", "GROUPE ALTERNANCE", "SELFORM", "ADMTC")
+CONFIDENTIEL = ("FR76", "929 011 369", "Jules Favre", "06 69 99 96 05", "GROUPE ALTERNANCE", "SELFORM", "ADMTC", "HOURIA", "YOUNES")
 
 
 def git(*args):
