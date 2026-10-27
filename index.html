@@ -161,6 +161,7 @@ table.edit .in{padding:6px 8px;font-size:14px}
 .st-envoyee{background:var(--ink);color:#fff}
 .st-payee{background:var(--okb);border-color:#bfe0cc;color:var(--ok)}
 .st-retard{background:var(--errb);border-color:#efc9c6;color:var(--err)}
+.st-perdue{background:#fff;border-color:#efc9c6;color:var(--err)}
 .st-annulee{background:#fff;border-color:var(--line2);color:var(--ink3);text-decoration:line-through}
 .st-histo{background:var(--soft);border-color:var(--line);color:var(--ink3)}
 
@@ -884,14 +885,16 @@ function montantLigne(l){ return arrondi((+l.quantite || 0) * (+l.pu || 0), 2); 
 function totalFacture(f){ var t = 0; (f.lignes || []).forEach(function(l){ t += montantLigne(l); }); t = arrondi(t, 2); return f.type === "avoir" ? -Math.abs(t) : t; }
 function totalAffiche(f){ return f.historique && f.total != null ? f.total : totalFacture(f); }
 function payeFacture(f){ var t = 0; (f.paiements || []).forEach(function(p){ t += +p.montant || 0; }); return arrondi(t, 2); }
-function resteFacture(f){ if(f.statut === "payee" || f.type === "avoir" || f.statut === "annulee") return 0; return arrondi(totalAffiche(f) - payeFacture(f) - avoirsDe(f), 2); }
+function resteFacture(f){ if(f.statut === "payee" || f.type === "avoir" || f.statut === "annulee" || f.statut === "perdue") return 0; return arrondi(totalAffiche(f) - payeFacture(f) - avoirsDe(f), 2); }
 function avoirsDe(f){ var t = 0; D.factures.forEach(function(a){ if(a.type === "avoir" && a.avoirDe === f.id && a.statut !== "brouillon") t += Math.abs(totalAffiche(a)); }); return t; }
+/* Créance perdue (client en liquidation) : ce qui restait à payer quand la facture est passée en irrécouvrable */
+function perte(f){ return f.statut === "perdue" ? Math.max(0, arrondi(totalAffiche(f) - payeFacture(f) - avoirsDe(f), 2)) : 0; }
 function emise(f){ return f.statut !== "brouillon" && f.statut !== "annulee"; }
 function clientFacture(f){ return f.client || client(f.clientId) || {nom: "Client inconnu", adresse: []}; }
 function delaiClient(f){ var c = client(f.clientId); return c && c.delai != null && c.delai !== "" ? +c.delai : +D.reglages.delaiRetard; }
 function echeance(f){ return ajouterJours(f.date || aujourdhui(), delaiClient(f)); }
 function enRetard(f){ return (f.statut === "emise" || f.statut === "envoyee") && f.type === "facture" && resteFacture(f) > 0.004 && echeance(f) < aujourdhui(); }
-var STATUTS = {brouillon: "Brouillon", emise: "À envoyer", envoyee: "Envoyée", payee: "Payée", annulee: "Annulée"};
+var STATUTS = {brouillon: "Brouillon", emise: "À envoyer", envoyee: "Envoyée", payee: "Payée", annulee: "Annulée", perdue: "Irrécouvrable"};
 function statutHTML(f){
   if(enRetard(f)) return '<span class="st st-retard">En retard de ' + joursEntre(echeance(f), aujourdhui()) + ' j</span>';
   var s = f.statut, lib = STATUTS[s] || s;
@@ -1870,7 +1873,7 @@ VUES.factures = function(){
     listeAnnees().slice().reverse().map(function(a){ return '<option' + (a === FILTRE.annee ? " selected" : "") + '>' + esc(a) + '</option>'; }).join("") + '</select></label>' +
     '<label class="champ"><span>Client</span><select class="in" data-ch="filtre" data-k="client"><option value="">Tous</option>' + optionsClients(FILTRE.client, true) + '</select></label>' +
     '<label class="champ"><span>Statut</span><select class="in" data-ch="filtre" data-k="statut">' +
-    [["", "Tous"], ["brouillon", "Brouillons"], ["emise", "À envoyer"], ["envoyee", "Envoyées"], ["retard", "En retard"], ["payee", "Payées"], ["avoir", "Avoirs"]]
+    [["", "Tous"], ["brouillon", "Brouillons"], ["emise", "À envoyer"], ["envoyee", "Envoyées"], ["retard", "En retard"], ["payee", "Payées"], ["perdue", "Irrécouvrables"], ["avoir", "Avoirs"]]
       .map(function(o){ return '<option value="' + o[0] + '"' + (o[0] === FILTRE.statut ? " selected" : "") + '>' + o[1] + '</option>'; }).join("") + '</select></label></div>';
   var liste = D.factures.filter(function(f){
     if(FILTRE.annee && FILTRE.annee !== "tout" && anneeScolaire(f.mois) !== FILTRE.annee) return false;
@@ -1987,7 +1990,7 @@ function actionsFacture(f){
   } else {
     h += '<button class="btn" data-act="apercu" data-id="' + f.id + '">' + ICO.oeil + ' Aperçu</button>';
     h += '<button class="btn" data-act="pdf" data-id="' + f.id + '">' + ICO.telecharger + ' PDF</button>';
-    if(f.type === "facture" && f.statut !== "annulee") h += '<button class="btn pri" data-act="envoyer" data-id="' + f.id + '">' + ICO.mail + ' ' + (f.statut === "emise" ? "Envoyer" : "Renvoyer") + '</button>';
+    if(f.type === "facture" && f.statut !== "annulee" && f.statut !== "perdue") h += '<button class="btn pri" data-act="envoyer" data-id="' + f.id + '">' + ICO.mail + ' ' + (f.statut === "emise" ? "Envoyer" : "Renvoyer") + '</button>';
     if(!f.historique && f.statut !== "payee" && !f.deverrouillee) h += '<button class="btn" data-act="corriger" data-id="' + f.id + '">Corriger</button>';
     if(f.type === "facture" && f.statut !== "annulee") h += '<button class="btn" data-act="avoir" data-id="' + f.id + '">Faire un avoir</button>';
   }
@@ -2002,6 +2005,9 @@ function paiementsHTML(f){
       return '<tr><td>' + esc(dateFr(p.date)) + '</td><td>' + esc(p.mode || "") + '</td><td class="num">' + euros(p.montant) + '</td><td class="act"><button class="ico-btn" data-act="paiement-moins" data-id="' + f.id + '" data-i="' + i + '" title="Supprimer">' + ICO.corbeille + '</button></td></tr>';
     }).join("") + '</tbody></table>';
   } else if(f.statut === "payee") h += '<p class="muet" style="font-size:14px;margin-top:6px">Payée' + (f.historique ? " (reprise de l’ancien fichier)" : "") + '. <button class="lien" data-act="non-payee" data-id="' + f.id + '">Remettre en attente</button></p>';
+  if(f.statut === "perdue") h += '<p style="font-size:14px;margin-top:8px"><span class="st st-perdue">Irrécouvrable</span> depuis le ' + esc(dateFr(f.perdueLe)) + (f.motifPerte ? ' : ' + esc(f.motifPerte) : '') +
+    '. Créance perdue : <b>' + euros(perte(f)) + '</b>. <button class="lien" data-act="non-perdue" data-id="' + f.id + '">Remettre en attente</button></p>';
+  else if(f.type === "facture" && (reste > 0.004 || (f.statut === "payee" && !(f.paiements || []).length))) h += '<p style="font-size:14px;margin-top:8px"><button class="lien" data-act="perdue" data-id="' + f.id + '">Client en liquidation : passer en irrécouvrable</button></p>';
   h += '</div><div class="bloc"><h2>Envoi</h2>';
   var cl = client(f.clientId) || {};
   h += '<p style="font-size:14px">Destinataires : <b>' + (adresses(cl.emailA).length ? esc(adresses(cl.emailA).join(", ")) : '<span style="color:var(--warn)">à renseigner</span>') + '</b>' +
@@ -2162,6 +2168,20 @@ ACTIONS["paiement-moins"] = function(el){
   if(f.statut === "payee" && payeFacture(f) + avoirsDe(f) < totalAffiche(f) - 0.005){ f.statut = "envoyee"; delete f.payeeLe; }
   sauver(); rendre();
 };
+ACTIONS.perdue = function(el){
+  var f = facture(el.getAttribute("data-id")), du = arrondi(totalAffiche(f) - payeFacture(f) - avoirsDe(f), 2);
+  ouvrirModal('<div class="kick">' + esc(f.numero) + ' · ' + esc(clientFacture(f).nom) + '</div><h2>Passer en irrécouvrable</h2>' +
+    '<p>Le client ne paiera pas (liquidation judiciaire, disparition). La facture n’est plus à encaisser ni à relancer ; les ' + euros(du) + ' non payés deviennent une perte. ' +
+    'Ne fais pas d’avoir : la somme reste due et peut être déclarée au liquidateur.</p>' +
+    '<div class="ligne-champs c2"><label class="champ"><span>Date</span><input class="in" type="date" id="pe-d" value="' + aujourdhui() + '"></label>' +
+    '<label class="champ"><span>Motif</span><input class="in" id="pe-m" value="Liquidation judiciaire du client"></label></div>' +
+    '<div class="modal-acts"><button class="btn" data-fermer>Annuler</button><button class="btn pri" id="pe-ok">Passer en irrécouvrable</button></div>');
+  $("pe-ok").onclick = function(){
+    f.statut = "perdue"; delete f.payeeLe; f.perdueLe = $("pe-d").value || aujourdhui(); f.motifPerte = $("pe-m").value.trim();
+    sauver(); fermerModal(); rendre(); toast("Facture passée en irrécouvrable");
+  };
+};
+ACTIONS["non-perdue"] = function(el){ var f = facture(el.getAttribute("data-id")); f.statut = "envoyee"; delete f.perdueLe; delete f.motifPerte; sauver(); rendre(); };
 ACTIONS["non-payee"] = function(el){ var f = facture(el.getAttribute("data-id")); f.statut = "envoyee"; delete f.payeeLe; sauver(); rendre(); };
 
 VUES.paiements = function(){
@@ -2195,11 +2215,11 @@ VUES.paiements = function(){
 
 /* ---------- Export pour le comptable (CSV lisible par Excel) ---------- */
 ACTIONS["export-csv"] = function(){
-  var lignes = [["Numéro", "Type", "Date", "Client", "Mois facturé", "Période du", "Période au", "Montant (€)", "Statut", "Payée le", "Reste à payer (€)", "Libellés"]];
+  var lignes = [["Numéro", "Type", "Date", "Client", "Mois facturé", "Période du", "Période au", "Montant (€)", "Statut", "Payée le", "Reste à payer (€)", "Créance perdue (€)", "Libellés"]];
   function n(v){ return nombre(v, 2).replace(/[\s  ]/g, ""); }
   D.factures.filter(emise).sort(function(a, b){ return (a.mois + a.numero).localeCompare(b.mois + b.numero); }).forEach(function(f){
     lignes.push([f.numero, f.type === "avoir" ? "Avoir" : "Facture", dateFr(f.date), clientFacture(f).nom, moisTexte(f.mois), dateFr(f.du), dateFr(f.au),
-      n(totalAffiche(f)), STATUTS[f.statut] || f.statut, f.payeeLe ? dateFr(f.payeeLe) : "", n(resteFacture(f)),
+      n(totalAffiche(f)), STATUTS[f.statut] || f.statut, f.payeeLe ? dateFr(f.payeeLe) : "", n(resteFacture(f)), perte(f) ? n(perte(f)) : "",
       (f.lignes || []).map(function(l){ return l.libelle; }).join(" / ")]);
   });
   var csv = lignes.map(function(l){
@@ -3976,6 +3996,8 @@ function operationsHTML(per){
      (« session juillet ») ; sans mois cité, dans le mois de la facture.
      Un mois facturé sur plusieurs factures au-delà du planning est une
      facturation en double : un avoir peut être préparé.
+   - Une facture irrécouvrable (client en liquidation) n'est plus attendue.
+   - Un mois facturé le mois d'à côté (en plus sur l'un, en moins sur l'autre) n'est pas une erreur.
    - Encaissé : virements du relevé, rattachés au mois de la facture qu'ils
      paient ; un virement sans facture est rattaché au mois écrit dans son
      libellé (numéro de facture, « 05.2026 »), sinon au mois précédent.
@@ -4045,6 +4067,7 @@ function croisement(an){
     repartition(f).forEach(function(rp){
       if(mois.indexOf(rp.mois) < 0) return;
       var l = L(rp.mois, f.clientId); l.facture += rp.montant;
+      if(f.statut === "perdue" && totalAffiche(f)) l.perdu = (l.perdu || 0) + rp.montant * perte(f) / totalAffiche(f);
       if(f.type === "facture"){
         if(l.factures.indexOf(f.id) < 0) l.factures.push(f.id);
         (l.parts = l.parts || []).push({f: f, l: rp.l, montant: rp.montant});
@@ -4083,6 +4106,16 @@ function croisement(an){
     }
     var l = L(mv.mois, cle); l.encaisse += o.m; l.virements.push({op: o, montant: o.m, lie: false, sansFacture: true, estime: !mv.sur});
   });
+  // facturé le mois d'à côté : en plus sur un mois, exactement autant en moins sur le mois voisin
+  Object.keys(lignes).forEach(function(k){
+    var x = lignes[k], d = x.facture - x.prevu;
+    if(x.cle.indexOf("cfa:") === 0 || d <= TOL_ECART || x.decale) return;
+    [ajouterMois(x.mois, -1), ajouterMois(x.mois, 1)].some(function(m){
+      var y = lignes[m + "|" + x.cle];
+      if(!y || y.decale || Math.abs(y.prevu - y.facture - d) > TOL_ECART) return false;
+      x.decale = m; y.decale = x.mois; return true;
+    });
+  });
   // diagnostic de chaque ligne
   var liste = Object.keys(lignes).map(function(k){ var l = lignes[k]; diagnostic(l, cov); return l; })
     .sort(function(a, b){ return a.mois.localeCompare(b.mois) || nomCle(a.cle).localeCompare(nomCle(b.cle)); });
@@ -4099,15 +4132,15 @@ function croisement(an){
   return {an: an, mois: mois, lignes: liste, cov: cov};
 }
 function diagnostic(l, cov){
-  l.prevu = arrondi(l.prevu, 2); l.facture = arrondi(l.facture, 2); l.encaisse = arrondi(l.encaisse, 2); l.msgs = [];
-  var t = TOL_ECART, p = arrondi(l.prevu + (l.ajout || 0), 2), f = l.facture, e = l.encaisse;
+  l.prevu = arrondi(l.prevu, 2); l.facture = arrondi(l.facture, 2); l.encaisse = arrondi(l.encaisse, 2); l.perdu = arrondi(l.perdu || 0, 2); l.msgs = [];
+  var t = TOL_ECART, p = arrondi(l.prevu + (l.ajout || 0), 2), f = l.facture, e = l.encaisse, attenduF = arrondi(f - l.perdu, 2);
   var fin = finDeMois(l.mois), attendu = ajouterJours(fin, delaiDe(l.cle));
   var aVenir = l.mois + "-01" > aujourdhui(), enCours = !aVenir && fin >= aujourdhui();
   var pasEncoreDu = !cov || attendu > cov.au;
   var horsReleve = cov && attendu < cov.du && e < t;
   l.attendu = attendu; l.echu = !aVenir && !enCours; l.du = l.echu && !pasEncoreDu && !horsReleve;
   function msg(niveau, texte){ l.msgs.push({n: niveau, t: texte}); }
-  if(p > t && f < t){
+  if(p > t && f < t && !l.decale){
     if(e > t) msg(2, "Encaissé, mais aucune facture dans le CRM pour ce mois");
     else if(aVenir) msg(0, "À venir");
     else if(enCours) msg(0, "Mois en cours : pas encore facturé");
@@ -4115,21 +4148,25 @@ function diagnostic(l, cov){
   } else if(f > p + t && refacture(l)){
     msg(2, "Mois refacturé sur une facture suivante (" + l.factures.map(function(id){ return (facture(id) || {}).numero; }).join(", ") +
       ") : " + euros(f - p) + " de trop par rapport au planning");
+  } else if(l.decale && Math.abs(f - p) > t){
+    msg(0, f > p ? "Comprend " + euros(f - p) + " de " + moisTexte(l.decale) + ", facturés ce mois-ci" : euros(p - f) + " facturés en " + moisTexte(l.decale));
   } else if(f > p + t && l.factures.length > 1){
     msg(1, "Mois facturé sur " + l.factures.length + " factures : " + euros(f - p) + " de plus que le planning (vérifie le planning)");
   } else if(f > t && Math.abs(f - p) > t){
     msg(1, p > t ? "Facturé " + (f > p ? "plus" : "moins") + " que le planning (" + (f > p ? "+" : "") + euros(f - p) + ")" : "Facturé sans activité au planning");
   }
   if(f < t && p < t && e > t) msg(2, "Encaissé, sans planning ni facture pour ce mois");
-  if(f > t){
+  if(l.perdu > t) msg(0, "Irrécouvrable (client en liquidation) : " + euros(l.perdu) + ", " +
+    l.factures.filter(function(id){ return (facture(id) || {}).statut === "perdue"; }).map(function(id){ return facture(id).numero; }).join(", "));
+  if(attenduF > t){
     if(horsReleve) msg(0, "Paiement antérieur au relevé : non vérifiable");
-    else if(e < f - t){
+    else if(e < attenduF - t){
       var payees = {}; l.virements.forEach(function(v){ if(v.facture) payees[v.facture] = 1; });
-      var sans = l.factures.filter(function(id){ return !payees[id] && (l.annulees || []).indexOf(id) < 0; }).map(function(id){ return (facture(id) || {}).numero; });
+      var sans = l.factures.filter(function(id){ return !payees[id] && (l.annulees || []).indexOf(id) < 0 && (facture(id) || {}).statut !== "perdue"; }).map(function(id){ return (facture(id) || {}).numero; });
       var quelles = sans.length ? " : " + (sans.length > 1 ? "factures " : "facture ") + sans.join(", ") + " sans virement" : "";
-      msg(pasEncoreDu ? 0 : 2, pasEncoreDu ? "Paiement attendu vers le " + dateFr(attendu) + (e > t ? " (reste " + euros(f - e) + ")" : "") : (e > t ? "Payé en partie, il manque " + euros(f - e) : "Facturé, rien encaissé (" + euros(f) + ")") + quelles);
+      msg(pasEncoreDu ? 0 : 2, pasEncoreDu ? "Paiement attendu vers le " + dateFr(attendu) + (e > t ? " (reste " + euros(attenduF - e) + ")" : "") : (e > t ? "Payé en partie, il manque " + euros(attenduF - e) : "Facturé, rien encaissé (" + euros(attenduF) + ")") + quelles);
     }
-    else if(e > f + t) msg(1, "Encaissé plus que facturé (+" + euros(e - f) + ")");
+    else if(e > attenduF + t) msg(1, "Encaissé plus que facturé (+" + euros(e - attenduF) + ")");
   }
   if(l.virements.some(function(v){ return v.sansFacture && v.estime; })) msg(1, "Mois du virement estimé (le libellé ne le précise pas)");
   l.niveau = l.msgs.reduce(function(m, x){ return Math.max(m, x.n); }, -1);
@@ -4172,7 +4209,7 @@ function factureEnTrop(){
       var p = arrondi(x.prevu + (x.ajout || 0), 2), trop = arrondi(x.facture - p, 2);
       if(trop <= TOL_ECART) return;
       if(!refacture(x)){
-        if(p > TOL_ECART || x.factures.length > 1) aVerifier.push({cle: x.cle, mois: x.mois, prevu: p, facture: x.facture, n: x.factures.length, factures: x.factures});
+        if(!x.decale && (p > TOL_ECART || x.factures.length > 1)) aVerifier.push({cle: x.cle, mois: x.mois, prevu: p, facture: x.facture, n: x.factures.length, factures: x.factures});
         return;
       }
       var c = C(x.cle);
@@ -4300,7 +4337,7 @@ function ecartsHTML(anUrl, per){
     if(!l.echu) return;
     ech.prevu += l.prevu; ech.facture += l.facture; ech.encaisse += l.encaisse;
     if(!dernier || l.mois > dernier) dernier = l.mois;
-    if(l.du) ech.manque += Math.max(0, l.facture - l.encaisse);
+    if(l.du) ech.manque += Math.max(0, l.facture - l.perdu - l.encaisse);
   });
   var aVoir = C.lignes.filter(function(l){ return l.niveau >= 1; });
   var partiel = dernier && dernier < C.mois[11], jusque = dernier ? (partiel ? "jusqu'à fin " + moisTexte(dernier) : "année " + an) : "aucun mois terminé";
