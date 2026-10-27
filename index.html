@@ -4198,7 +4198,8 @@ function refacture(l){ return (l.parts || []).some(function(pt){ return pt.f.moi
    - mois refacturés : repris sur une facture suivante et facturés au-delà du planning. Les lignes reprises
      (les plus récentes d'abord) vont dans l'avoir.
    - factures payées deux fois (relevé).
-   - solde après l'avoir : reste à payer sur ses factures, moins l'avoir, moins ce qu'il a payé deux fois.
+   - solde après l'avoir : reste à payer sur ses factures, moins l'avoir. Un double paiement reste à part
+     (ni dans l'avoir, ni dans le solde).
    - à vérifier : mois facturés plus que le planning sans reprise ; souvent un planning incomplet. */
 function factureEnTrop(){
   var parCli = {}, aVerifier = [];
@@ -4240,7 +4241,7 @@ function factureEnTrop(){
     c.reste = arrondi(aPayer.reduce(function(t, f){ return t + resteFacture(f); }, 0), 2);
     c.doubles.forEach(function(d){ doubles += d.trop; });
     c.payeDouble = arrondi(doubles, 2);
-    c.solde = arrondi(c.reste - c.trop - c.payeDouble, 2);   // négatif : c'est toi qui dois de l'argent au client
+    c.solde = arrondi(c.reste - c.trop, 2);   // négatif : c'est toi qui dois de l'argent au client
     c.brouillon = D.factures.filter(function(a){ return a.type === "avoir" && a.clientId === k && a.statut === "brouillon" && /^Avoir pour facturation en double/.test(a.note || ""); })[0];
     return c;
   }).sort(function(a, b){ return a.solde - b.solde; });
@@ -4264,18 +4265,20 @@ function blocEnTrop(){
       var detail = [];
       if(c.reste > TOL_ECART) detail.push(euros(c.reste) + ' encore à payer (' + c.aPayer.map(function(f){ return esc(f.numero); }).join(", ") + ')');
       if(c.trop > TOL_ECART) detail.push('− avoir ' + euros(c.trop));
-      if(c.payeDouble > TOL_ECART) detail.push('− ' + euros(c.payeDouble) + ' payés deux fois');
       var solde = c.solde < -TOL_ECART ? '<div class="ec-msg n2">Tu dois ' + euros(-c.solde) + ' à ce client</div>' :
         c.solde > TOL_ECART ? '<div class="ec-msg">Il te doit encore ' + euros(c.solde) + '</div>' : '<div class="ec-msg">Soldé</div>';
+      var aPart = c.payeDouble > TOL_ECART ? '<div class="ec-msg n2">À part : ' + euros(c.payeDouble) + ' payés deux fois (' +
+        c.doubles.map(function(d){ return 'facture ' + esc(d.f.numero); }).join(", ") + '), hors avoir</div>' : '';
       var bouton = c.trop <= TOL_ECART ? '' : c.brouillon ?
         '<button class="btn petit" data-act="aller" data-v="facture/' + c.brouillon.id + '">Ouvrir l\'avoir en brouillon</button>' :
         '<button class="btn petit pri" data-act="avoir-en-trop" data-cl="' + esc(c.cle) + '">Préparer l\'avoir de ' + euros(c.trop) + '</button>';
       h += '<tr class="ec-rouge"><td><b>' + esc(nomCle(c.cle)) + '</b></td><td>' + quoi.join('<br>') + '</td>' +
         '<td class="num"><b>' + (c.trop > TOL_ECART ? euros(c.trop) : 'aucun') + '</b>' + (c.encaisseTrop > TOL_ECART ? '<div class="muet">dont ' + euros(c.encaisseTrop) + ' déjà payés</div>' : '') + '</td>' +
-        '<td class="num">' + solde + (detail.length ? '<div class="muet">' + detail.join(' ') + '</div>' : '') + '</td><td>' + bouton + '</td></tr>';
+        '<td class="num">' + solde + (detail.length ? '<div class="muet">' + detail.join(' ') + '</div>' : '') + aPart + '</td><td>' + bouton + '</td></tr>';
     });
     h += '</tbody></table></div><p class="aide">L\'avoir reprend chaque ligne facturée en double, avec le numéro de sa facture, et s\'impute sur la dernière facture concernée ; ' +
-      'il reste en brouillon pour que tu le vérifies. Le solde tient compte des factures encore à payer : s\'il est en faveur du client, rembourse-le ou déduis-le de sa prochaine facture.</p></div>';
+      'il reste en brouillon pour que tu le vérifies. Le solde tient compte des factures encore à payer : s\'il est en faveur du client, rembourse-le ou déduis-le de sa prochaine facture. ' +
+      'Une facture payée deux fois n\'entre ni dans l\'avoir ni dans le solde : elle se règle à part.</p></div>';
   }
   if(E.aVerifier.length){
     h += '<div class="bloc"><details><summary><b>Facturé plus que le planning : ' + E.aVerifier.length + ' mois à vérifier</b></summary>' +
