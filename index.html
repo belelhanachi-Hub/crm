@@ -1008,7 +1008,7 @@ function remplir(modele, f){
   };
   return String(modele || "").replace(/\{[A-Z_]+\}/g, function(k){ return v[k] != null ? v[k] : k; });
 }
-/* Nom des PDF : modèle du client s'il en a un (Groupe Alternance : « HANACHI.BELEL -ARA69-09.2026 »), sinon celui des Paramètres */
+/* Nom des PDF : modèle du client s'il en a un (Groupe Alternance : « HANACHI.BELEL-ARA69-09.2026 »), sinon celui des Paramètres */
 function modeleFichier(f){ var cl = client(f.clientId); return cl && plein(cl.fichier) ? cl.fichier : D.reglages.fichier; }
 function nomBase(f){
   var m = modeleFichier(f), n = ascii(remplir(m, f)).toUpperCase();
