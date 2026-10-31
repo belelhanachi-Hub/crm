@@ -719,8 +719,10 @@ function migrer(d){
   if(!plein(d.reglages.emetteur.nda) && plein(r.emetteur.nda)) d.reglages.emetteur.nda = r.emetteur.nda;   // NDA communiqué le 08/10/2026
   if(!d.reglages.fichier) d.reglages.fichier = r.fichier;
   // noms de PDF demandés par Groupe Alternance (31/10/2026), modifiables dans la fiche client
-  var NOMS_GA = {ga69: "HANACHI.BELEL -ARA69-{MM}.{AAAA}", ga42: "HANACHI.BELEL -ARA42-{MM}.{AAAA}"};
-  (d.clients || []).forEach(function(c){ if(NOMS_GA[c.id] && c.fichier == null) c.fichier = NOMS_GA[c.id]; });
+  var NOMS_GA = {ga69: "HANACHI.BELEL-ARA69-{MM}.{AAAA}", ga42: "HANACHI.BELEL-ARA42-{MM}.{AAAA}"};
+  (d.clients || []).forEach(function(c){
+    if(NOMS_GA[c.id] && (c.fichier == null || c.fichier === NOMS_GA[c.id].replace("-ARA", " -ARA"))) c.fichier = NOMS_GA[c.id];   // sans espace (31/10/2026)
+  });
   d.extras = d.extras || []; d.factures = d.factures || []; d.couleurs = d.couleurs || {};
   d.banque = d.banque || {ops: [], imports: [], regles: [], solde: null, compte: ""};
   return d;
