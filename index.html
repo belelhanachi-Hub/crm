@@ -4637,7 +4637,8 @@ function kmHTML(anUrl, per){
   var C = calculKm(an), F = calculKm(an, aujourdhui()), enCours = an === aujourdhui().slice(0, 4), fini = an < aujourdhui().slice(0, 4);
   var h = '<div class="filtres"><label class="champ"><span>Exercice (1er janvier au 31 décembre)</span><select class="in" data-ch="km-an" data-per="' + esc(per) + '">' +
     annees.map(function(a){ return '<option value="' + a + '"' + (a === an ? " selected" : "") + '>' + a + '</option>'; }).join("") + '</select></label>' +
-    '<div class="barre-actions" style="margin-bottom:6px"><button class="btn pri" data-act="km-pdf" data-an="' + an + '">' + ICO.telecharger + ' Relevé PDF de l\'exercice</button>' +
+    '<div class="barre-actions" style="margin-bottom:6px"><button class="btn pri" data-act="km-pdf" data-an="' + an + '">' + ICO.telecharger + ' Relevé PDF de l\'exercice (1 page)</button>' +
+    '<button class="btn" data-act="km-pdf" data-an="' + an + '" data-detail="1">Relevé détaillé</button>' +
     '<button class="btn" data-act="km-csv" data-an="' + an + '">Export Excel</button></div></div>';
   var regler = Object.keys(C.aRegler);
   if(regler.length) h += '<div class="enc alerte"><b>' + regler.length + ' lieu' + (regler.length > 1 ? "x" : "") + ' à régler :</b> ' +
@@ -4751,15 +4752,19 @@ ACTIONS["km-csv"] = function(el){
   toast("Export téléchargé : il s’ouvre dans Excel");
 };
 
-/* ---------- Relevé PDF : l'exercice (mois par mois, puis chaque trajet) ou un seul mois ---------- */
+/* ---------- Relevé PDF ---------- */
 function tronquerPdf(s, police, taille, largeur){
   s = String(s == null ? "" : s);
   while(s.length > 3 && largeurTexte(s, police, taille) > largeur) s = s.slice(0, -2).trim() + ".";
   return s;
 }
-async function pdfKm(an, moisSeul){
+/* Relevé PDF. Trois formes :
+   - l'exercice sur UNE page : mois par mois, puis les jours de déplacement de chaque mois, lieu par lieu ;
+   - un mois sur une page : chaque trajet (lignes resserrées si le mois est chargé) ;
+   - l'exercice détaillé (detail = true) : chaque trajet de l'année, sur plusieurs pages. */
+async function pdfKm(an, moisSeul, detail){
   var C = calculKm(an, moisSeul ? (finDeMois(moisSeul) < aujourdhui() ? finDeMois(moisSeul) : aujourdhui()) : limiteKm(an));
-  var k = kmR(), e = D.reglages.emetteur, pages = [], p = null, haut = 0, BAS = PDF_H - 58;
+  var k = kmR(), e = D.reglages.emetteur, pages = [], p = null, haut = 0, BAS = PDF_H - 58, unePage = !moisSeul && !detail;
   var titre = "Relevé des indemnités kilométriques", sous = moisSeul ? moisTitre(moisSeul) : "Exercice du 01/01/" + an + " au 31/12/" + an;
   function page(){
     p = new PagePDF(); pages.push(p);
@@ -4768,80 +4773,150 @@ async function pdfKm(an, moisSeul){
       p.image("Logo", MG, 34, lw, lh);
       p.texte(MG + lw + 16, 56, titre, {police: "D", taille: 17});
       p.texte(MG + lw + 16, 72, sous + (C.limite < an + "-12-31" || moisSeul ? " · arrêté au " + dateFr(C.limite) : ""), {taille: 9.5, couleur: C_GRIS2});
-      haut = 34 + Math.max(lh, 46) + 18;
+      haut = 34 + Math.max(lh, 46) + 14;
     } else {
       p.texte(MG, 46, titre + " · " + sous, {police: "B", taille: 9}); p.trait(MG, 54, PDF_W - MG, 54, C_FILET, 0.6); haut = 72;
     }
   }
   function place(h){ if(haut + h > BAS) page(); }
-  function tableau(cols, lignes, total){
-    // cols : [{t, w, a}] ; lignes : tableaux de textes ; total : dernière ligne en gras
+  function tableau(cols, lignes, total, rh){
+    // cols : [{t, w, a}] ; lignes : tableaux de textes ; total : dernière ligne en gras ; rh : hauteur d'une ligne
+    rh = rh || 16;
+    var tl = rh < 13 ? 7.6 : 8.2;
     function entete(){
       p.rect(MG, haut, LARG, 20, C_BEIGE);
       var x = MG; cols.forEach(function(c){ p.texte(c.a === "r" ? x + c.w - 6 : x + 6, haut + 13, c.t, {police: "B", taille: 7.2, couleur: C_GRIS2, align: c.a === "r" ? "r" : null}); x += c.w; });
       haut += 20;
     }
-    place(20 + 16); entete();
+    place(20 + rh); entete();
     lignes.concat(total ? [total] : []).forEach(function(l, i){
-      if(haut + 16 > BAS){ page(); entete(); }
+      if(haut + rh > BAS){ page(); entete(); }
       var gras = total && i === lignes.length, x = MG;
-      if(gras) p.rect(MG, haut, LARG, 16, C_BEIGE3);
+      if(gras) p.rect(MG, haut, LARG, rh, C_BEIGE3);
       cols.forEach(function(c, j){
-        var s = tronquerPdf(l[j], gras ? "B" : "R", 8.2, c.w - 10);
-        p.texte(c.a === "r" ? x + c.w - 6 : x + 6, haut + 11, s, {police: gras ? "B" : "R", taille: 8.2, align: c.a === "r" ? "r" : null, couleur: l.gris ? C_GRIS : C_ENCRE}); x += c.w;
+        var s = tronquerPdf(l[j], gras ? "B" : "R", tl, c.w - 10);
+        p.texte(c.a === "r" ? x + c.w - 6 : x + 6, haut + rh - 5, s, {police: gras ? "B" : "R", taille: tl, align: c.a === "r" ? "r" : null, couleur: l.gris ? C_GRIS : C_ENCRE}); x += c.w;
       });
-      haut += 16; p.trait(MG, haut, PDF_W - MG, haut, C_FILET, 0.4);
+      haut += rh; p.trait(MG, haut, PDF_W - MG, haut, C_FILET, 0.4);
     });
-    haut += 14;
+    haut += 12;
   }
-  function titreBloc(s){ place(40); p.texte(MG, haut + 10, s, {police: "B", taille: 10.5}); haut += 20; }
-  function ligneInfo(lib, val){ p.texte(MG + 10, haut, lib, {police: "B", taille: 8.4, couleur: C_GRIS2}); p.texte(MG + 96, haut, tronquerPdf(val, "R", 8.6, LARG - 110), {taille: 8.6}); haut += 13; }
+  function titreBloc(s, note){
+    place(40); p.texte(MG, haut + 10, s, {police: "B", taille: 10.5});
+    if(note) p.texte(PDF_W - MG, haut + 10, note, {taille: 7.6, couleur: C_GRIS, align: "r"});
+    haut += 19;
+  }
   page();
-  // identité
-  var infos = [["Société", [e.nom, e.forme].filter(plein).join(" - ")], ["Bénéficiaire", e.signature || ""],
-    ["Véhicule", [k.vehicule.nom, (k.vehicule.cv || "") + " CV fiscaux", (ENERGIES_KM.filter(function(o){ return o[0] === (k.vehicule.energie || "thermique"); })[0] || [])[1]].filter(plein).join(" · ")],
-    ["Départ", departKm()]];
-  p.rect(MG, haut, LARG, infos.length * 13 + 14, C_BEIGE3); haut += 17;
-  infos.forEach(function(r){ ligneInfo(r[0], r[1]); });
-  haut += 16;
+  // identité, sur deux colonnes
+  var energie = (ENERGIES_KM.filter(function(o){ return o[0] === (k.vehicule.energie || "thermique"); })[0] || [])[1];
+  p.rect(MG, haut, LARG, 38, C_BEIGE3);
+  [[["Société", [e.nom, e.forme].filter(plein).join(" - ")], ["Véhicule", [k.vehicule.nom, (k.vehicule.cv || "") + " CV fiscaux", energie].filter(plein).join(" · ")]],
+   [["Bénéficiaire", e.signature || ""], ["Départ", departKm()]]].forEach(function(l, i){
+    var y = haut + 15 + i * 13;
+    p.texte(MG + 10, y, l[0][0], {police: "B", taille: 8, couleur: C_GRIS2}); p.texte(MG + 68, y, tronquerPdf(l[0][1], "R", 8.2, 136), {taille: 8.2});
+    p.texte(MG + 214, y, l[1][0], {police: "B", taille: 8, couleur: C_GRIS2}); p.texte(MG + 258, y, tronquerPdf(l[1][1], "R", 8.2, LARG - 268), {taille: 8.2});
+  });
+  haut += 38 + 14;
   // mois par mois
   function n(v){ return v ? qte(v) : "-"; }
   var colsM = [{t: "MOIS", w: 100}, {t: "TRAJETS", w: 48, a: "r"}, {t: "KM VOITURE", w: 62, a: "r"}, {t: "KM CUMULÉS", w: 62, a: "r"}, {t: "IND. VOITURE", w: 70, a: "r"}, {t: "KM VÉLO", w: 50, a: "r"}, {t: "IND. VÉLO", w: 54, a: "r"}, {t: "TOTAL", w: LARG - 446, a: "r"}];
   var moisVus = C.mois.filter(function(x){ return moisSeul ? x.mois === moisSeul : x.trajets.length; });
   titreBloc(moisSeul ? "Total du mois" : "Mois par mois");
   tableau(colsM, moisVus.map(function(x){ return [moisTitre(x.mois), String(x.n), n(x.kmV), x.kmV ? qte(x.cumul) : "-", x.kmV ? euros(x.indV) : "-", n(x.kmB), x.kmB ? euros(x.indB) : "-", euros(x.total)]; }),
-    moisSeul ? null : ["Total " + an, String(C.tot.n), n(C.tot.kmV), "", euros(C.tot.indV), n(C.tot.kmB), euros(C.tot.indB), euros(C.tot.total)]);
+    moisSeul ? null : ["Total " + an, String(C.tot.n), n(C.tot.kmV), "", euros(C.tot.indV), n(C.tot.kmB), euros(C.tot.indB), euros(C.tot.total)], unePage ? 13.5 : 16);
   if(moisSeul && moisVus[0] && moisVus[0].kmV){
-    place(14); p.texte(MG, haut, "Km en voiture cumulés depuis le 1er janvier : " + qte(moisVus[0].avant) + " avant ce mois, " + qte(moisVus[0].cumul) + " à la fin du mois.", {taille: 8.2, couleur: C_GRIS2}); haut += 18;
+    place(14); p.texte(MG, haut, "Km en voiture cumulés depuis le 1er janvier : " + qte(moisVus[0].avant) + " avant ce mois, " + qte(moisVus[0].cumul) + " à la fin du mois.", {taille: 8.2, couleur: C_GRIS2}); haut += 16;
   }
-  // lieux
-  var lieux = []; C.trajets.forEach(function(t){ if((!moisSeul || t.iso.slice(0, 7) === moisSeul) && lieux.indexOf(t.cfa) < 0) lieux.push(t.cfa); });
-  titreBloc("Lieux d'intervention");
-  tableau([{t: "LIEU", w: 140}, {t: "ADRESSE", w: LARG - 280}, {t: "MODE", w: 50}, {t: "KM ALLER-RETOUR", w: 90, a: "r"}], lieux.sort().map(function(c){
-    var cl = clientDeCfa(c), l = lieuKm(c); return [cl ? (cl.court || cl.nom) : c, adresseLieuKm(c), l.mode === "voiture" ? "Voiture" : "Vélo", qte(+l.km || 0)];
-  }));
-  // méthode
-  var notes = ["Voiture : barème kilométrique fiscal (arrêté du 27 mars 2023, inchangé en 2026). " + texteBareme(),
+  var lieux = []; C.trajets.forEach(function(t){ if(t.km && (!moisSeul || t.iso.slice(0, 7) === moisSeul) && lieux.indexOf(t.cfa) < 0) lieux.push(t.cfa); });
+  lieux.sort();
+  function nomLieu(c){ var cl = clientDeCfa(c); return cl ? (cl.court || cl.nom) : c; }
+  function modeLieu(c){ return lieuKm(c).mode === "voiture" ? "Voiture" : "Vélo"; }
+  // méthode (lignes préparées : leur hauteur sert au calage sur une page)
+  var tn = unePage ? 7.3 : 7.8, notes = ["Voiture : barème kilométrique fiscal (arrêté du 27 mars 2023, inchangé en 2026). " + texteBareme(),
     "Le barème s'applique aux km cumulés depuis le 1er janvier ; l'indemnité d'un mois est ce que ce mois ajoute au cumul. Péages et stationnement non compris."];
   if(C.tot.kmB) notes.push("Vélo : " + nombre(+k.tauxVelo || 0, 2) + " € par km (taux retenu par la société, hors barème fiscal).");
-  notes.forEach(function(s){
-    decouper(s, "R", 7.8, LARG).forEach(function(l){ place(11); p.texte(MG, haut, l, {taille: 7.8, couleur: C_GRIS2}); haut += 11; });
-    haut += 3;
-  });
-  haut += 10;
-  // détail
-  var colsT = [{t: "DATE", w: 86}, {t: "LIEU", w: LARG - 300}, {t: "PRÉSENCE", w: 70}, {t: "MODE", w: 54}, {t: "KM ALLER-RETOUR", w: 90, a: "r"}];
-  moisVus.forEach(function(x){
-    if(!x.trajets.length) return;
-    titreBloc("Trajets de " + moisTexte(x.mois));
-    tableau(colsT, x.trajets.map(function(t){
-      var cl = clientDeCfa(t.cfa), l = [jourCourt(t.iso) + " " + dateFr(t.iso), (cl ? (cl.court || cl.nom) : t.cfa) + (t.multi ? " · 2 lieux ce jour" : ""), t.demi, t.mode === "voiture" ? "Voiture" : "Vélo", t.km ? qte(t.km) + (t.corrige ? " *" : "") : "non compté"];
-      l.gris = !t.km; return l;
-    }), ["Total du mois", "", "", "", (x.kmV ? qte(x.kmV) + " voiture" : "") + (x.kmV && x.kmB ? " · " : "") + (x.kmB ? qte(x.kmB) + " vélo" : "")]);
-    if(x.trajets.some(function(t){ return t.corrige && t.km; })){ p.texte(MG, haut - 4, "* distance corrigée ce jour-là", {taille: 7.2, couleur: C_GRIS}); haut += 8; }
-  });
-  place(46);
-  p.texte(MG, haut + 10, "Certifié exact, le " + dateFr(aujourdhui()), {taille: 8.6}); p.texte(MG + 260, haut + 10, "Signature :", {taille: 8.6});
+  if(unePage && C.trajets.some(function(t){ return t.corrige && t.km; })) notes.push("* distance corrigée ce jour-là.");
+  var lignesNotes = notes.map(function(s){ return decouper(s, "R", tn, LARG); }), hNotes = 6;
+  lignesNotes.forEach(function(ls){ hNotes += ls.length * (tn + 2.6) + 3; });
+  function ecrireNotes(){
+    lignesNotes.forEach(function(ls){ ls.forEach(function(l){ place(tn + 2.6); p.texte(MG, haut + tn, l, {taille: tn, couleur: C_GRIS2}); haut += tn + 2.6; }); haut += 3; });
+    haut += 6;
+  }
+
+  if(unePage){
+    // jours de déplacement : une ligne par mois, une colonne par lieu, le numéro de chaque jour
+    var jours = {}, poids = lieux.map(function(){ return 16; });
+    moisVus.forEach(function(x){
+      jours[x.mois] = lieux.map(function(c, i){
+        var s = x.trajets.filter(function(t){ return t.cfa === c && t.km; }).map(function(t){ return +t.iso.slice(8) + (t.corrige ? "*" : ""); }).join(", ");
+        poids[i] = Math.max(poids[i], s.length); return s;
+      });
+    });
+    var wM = 74, mini = Math.min(70, (LARG - wM) / Math.max(1, lieux.length)), sp = poids.reduce(function(a, b){ return a + b; }, 0) || 1;
+    var larg = poids.map(function(q){ return mini + (LARG - wM - mini * lieux.length) * q / sp; });
+    var tetes = lieux.map(function(c, i){
+      var ad = decouper(adresseLieuKm(c), "R", 6.4, larg[i] - 10).slice(0, 2);
+      var pied = modeLieu(c) + " · " + qte(+lieuKm(c).km || 0) + " km aller-retour";
+      if(largeurTexte(pied, "B", 6.6) > larg[i] - 10) pied = modeLieu(c) + " · " + qte(+lieuKm(c).km || 0) + " km A/R";
+      return {nom: decouper(nomLieu(c), "B", 7.4, larg[i] - 10).slice(0, 2), ad: ad, pied: pied};
+    });
+    var nNom = Math.max.apply(null, tetes.map(function(t){ return t.nom.length; }).concat([1])), nAd = Math.max.apply(null, tetes.map(function(t){ return t.ad.length; }).concat([1]));
+    var hTete = 5 + 9 * nNom + 8.4 * nAd + 14;
+    var dispo = BAS - haut - 19 - 10 - hNotes - 38, tj = 7.6, plan = null;
+    [7.6, 7.2, 6.8, 6.4, 6, 5.6].some(function(t){
+      var rows = moisVus.map(function(x){
+        var cells = jours[x.mois].map(function(s, i){ return s ? decouper(s, "R", t, larg[i] - 10) : []; });
+        return {mois: x.mois, cells: cells, h: Math.max.apply(null, cells.map(function(c){ return c.length; }).concat([1])) * (t + 2) + 6};
+      });
+      tj = t; plan = rows;
+      return hTete + rows.reduce(function(a, r){ return a + r.h; }, 0) <= dispo;
+    });
+    titreBloc("Jours de déplacement", "le numéro de chaque jour : un aller-retour");
+    p.rect(MG, haut, LARG, hTete, C_BEIGE);
+    p.texte(MG + 6, haut + 12, "MOIS", {police: "B", taille: 7.2, couleur: C_GRIS2});
+    var x0 = MG + wM;
+    tetes.forEach(function(t, i){
+      t.nom.forEach(function(l, j){ p.texte(x0 + 5, haut + 12 + j * 9, tronquerPdf(l, "B", 7.4, larg[i] - 10), {police: "B", taille: 7.4}); });
+      t.ad.forEach(function(l, j){ p.texte(x0 + 5, haut + 12.5 + 9 * nNom + j * 8.4, tronquerPdf(l, "R", 6.4, larg[i] - 10), {taille: 6.4, couleur: C_GRIS2}); });
+      p.texte(x0 + 5, haut + hTete - 6, t.pied, {police: "B", taille: 6.6, couleur: C_GRIS2});
+      x0 += larg[i];
+    });
+    haut += hTete;
+    plan.forEach(function(r){
+      if(haut + r.h > BAS) page();
+      p.texte(MG + 6, haut + tj + 3, moisTitre(r.mois), {police: "B", taille: Math.min(8, tj + 0.6)});
+      var x = MG + wM;
+      r.cells.forEach(function(ls, i){
+        if(!ls.length) p.texte(x + 5, haut + tj + 3, "-", {taille: tj, couleur: C_GRIS});
+        ls.forEach(function(l, j){ p.texte(x + 5, haut + tj + 3 + j * (tj + 2), l, {taille: tj}); });
+        x += larg[i];
+      });
+      haut += r.h; p.trait(MG, haut, PDF_W - MG, haut, C_FILET, 0.4);
+    });
+    haut += 10;
+    ecrireNotes();
+  } else {
+    titreBloc("Lieux d'intervention");
+    tableau([{t: "LIEU", w: 140}, {t: "ADRESSE", w: LARG - 280}, {t: "MODE", w: 50}, {t: "KM ALLER-RETOUR", w: 90, a: "r"}], lieux.map(function(c){
+      return [nomLieu(c), adresseLieuKm(c), modeLieu(c), qte(+lieuKm(c).km || 0)];
+    }), null, moisSeul ? 14 : 16);
+    ecrireNotes();
+    // chaque trajet ; pour un mois seul, les lignes se resserrent pour tenir sur la page
+    var colsT = [{t: "DATE", w: 86}, {t: "LIEU", w: LARG - 300}, {t: "PRÉSENCE", w: 70}, {t: "MODE", w: 54}, {t: "KM ALLER-RETOUR", w: 90, a: "r"}];
+    moisVus.forEach(function(x){
+      if(!x.trajets.length) return;
+      var corr = x.trajets.some(function(t){ return t.corrige && t.km; }), rh = 16;
+      if(moisSeul) rh = Math.max(10.5, Math.min(16, (BAS - haut - 19 - 20 - 12 - 40 - (corr ? 8 : 0)) / (x.trajets.length + 1)));
+      titreBloc("Trajets de " + moisTexte(x.mois));
+      tableau(colsT, x.trajets.map(function(t){
+        var l = [jourCourt(t.iso) + " " + dateFr(t.iso), nomLieu(t.cfa) + (t.multi ? " · 2 lieux ce jour" : ""), t.demi, t.mode === "voiture" ? "Voiture" : "Vélo", t.km ? qte(t.km) + (t.corrige ? " *" : "") : "non compté"];
+        l.gris = !t.km; return l;
+      }), ["Total du mois", "", "", "", (x.kmV ? qte(x.kmV) + " voiture" : "") + (x.kmV && x.kmB ? " · " : "") + (x.kmB ? qte(x.kmB) + " vélo" : "")], rh);
+      if(corr){ p.texte(MG, haut - 3, "* distance corrigée ce jour-là", {taille: 7.2, couleur: C_GRIS}); haut += 8; }
+    });
+  }
+  place(34);
+  p.texte(MG, haut + 12, "Certifié exact, le " + dateFr(aujourdhui()), {taille: 8.6}); p.texte(MG + 260, haut + 12, "Signature :", {taille: 8.6});
   // pieds de page
   pages.forEach(function(pg, i){
     pg.trait(MG, PDF_H - 40, PDF_W - MG, PDF_H - 40, C_FILET, 0.6);
@@ -4861,9 +4936,9 @@ function decouper(s, police, taille, largeur){
   return r;
 }
 ACTIONS["km-pdf"] = async function(el){
-  var an = el.getAttribute("data-an"), m = el.getAttribute("data-m");
-  var nom = "Indemnités km " + (m ? m : an) + " BF Conseil.pdf";
-  var blob = new Blob([await pdfKm(an, m)], {type: "application/pdf"});
+  var an = el.getAttribute("data-an"), m = el.getAttribute("data-m"), detail = el.getAttribute("data-detail") === "1";
+  var nom = "Indemnités km " + (m ? m : an) + (detail ? " détaillé" : "") + " BF Conseil.pdf";
+  var blob = new Blob([await pdfKm(an, m, detail)], {type: "application/pdf"});
   if(partageFichiersPossible()){
     try{ await navigator.share({files: [new File([blob], nom, {type: "application/pdf"})], title: nom.replace(/\.pdf$/, "")}); }
     catch(err){ if(err.name !== "AbortError") telecharger(nom, blob); }
